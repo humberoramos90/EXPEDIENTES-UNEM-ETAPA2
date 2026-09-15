@@ -677,6 +677,44 @@ def crear_almacen(nombre, estado, municipio, aula_taller):
         return False
 
 
+def eliminar_almacen(almacen_id):
+    """Elimina un almacén/aula taller por su ID"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("DELETE FROM almacenes WHERE id = ?", (almacen_id,))
+        conn.commit()
+        eliminado = c.rowcount > 0
+        conn.close()
+        return eliminado
+    except Exception:
+        conn.close()
+        return False
+
+
+def obtener_almacenes_filtro(estado="", municipio="", busqueda=""):
+    """Obtiene almacenes filtrados por estado, municipio y/o nombre de aula"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    query = "SELECT id, nombre, estado, municipio, aula_taller FROM almacenes WHERE 1=1"
+    params = []
+    if estado:
+        query += " AND estado = ?"
+        params.append(estado)
+    if municipio:
+        query += " AND municipio = ?"
+        params.append(municipio)
+    if busqueda:
+        query += " AND (nombre LIKE ? OR aula_taller LIKE ?)"
+        params.append(f"%{busqueda}%")
+        params.append(f"%{busqueda}%")
+    query += " ORDER BY estado, municipio, nombre"
+    c.execute(query, params)
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
 def obtener_programas(tipo_programa):
     """Obtiene la lista de programas para un tipo, incluyendo los dinámicos de config_listas"""
     conn = sqlite3.connect(DB_FILE)
@@ -2424,24 +2462,40 @@ def pagina_gestion_usuarios():
 # ============================================================
 
 def pagina_gestion_almacenes():
-    st.title("🏫 Gestión de Almacenes / Sedes")
+    st.title("🏫 Gestión de Almacenes / Aulas Taller")
     st.markdown("---")
     
-    tab1, tab2 = st.tabs(["📋 Listado", "➕ Crear Almacén"])
+    tab1, tab2, tab3 = st.tabs(["📋 Listado", "➕ Crear Almacén", "🗑️ Eliminar Almacén"])
     
     with tab1:
-        almacenes = obtener_almacenes()
+        st.subheader("📋 Almacenes / Aulas Taller Registrados")
+        
+        # Filtros para buscar fácilmente entre 1000+ registros
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filtro_estado = st.selectbox("Filtrar por Estado", options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()), key="alm_filt_est")
+        with col_f2:
+            estado_sel = filtro_estado if filtro_estado != "Todos" else ""
+            municipios_disponibles = ["Todos"] + ESTADOS_MUNICIPIOS.get(filtro_estado, ["Seleccione"]) if filtro_estado != "Todos" else ["Todos"]
+            filtro_municipio = st.selectbox("Filtrar por Municipio", options=municipios_disponibles, key="alm_filt_mun")
+        with col_f3:
+            filtro_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_filt_bus")
+        
+        municipio_sel = filtro_municipio if filtro_municipio != "Todos" else ""
+        almacenes = obtener_almacenes_filtro(estado_sel, municipio_sel, filtro_busqueda)
+        
         if almacenes:
             df = pd.DataFrame(almacenes, columns=["ID", "Nombre", "Estado", "Municipio", "Aula Taller"])
             st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption(f"Mostrando {len(almacenes)} almacén(es)")
         else:
-            st.info("No hay almacenes registrados. Cree uno primero.")
+            st.info("No se encontraron almacenes con esos filtros.")
     
     with tab2:
         with st.form("form_crear_almacen"):
             nombre_alm = st.text_input("Nombre del Almacén *", placeholder="Ej: Aula Taller Principal")
-            estado_alm = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()))
-            municipio_alm = st.selectbox("Municipio *", options=ESTADOS_MUNICIPIOS.get(estado_alm, ["Seleccione"]))
+            estado_alm = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()), key="alm_crear_est")
+            municipio_alm = st.selectbox("Municipio *", options=ESTADOS_MUNICIPIOS.get(estado_alm, ["Seleccione"]), key="alm_crear_mun")
             aula_alm = st.text_input("Aula Taller *", placeholder="Ej: Aula 01")
             
             submitted = st.form_submit_button("✅ Crear Almacén")
@@ -2455,6 +2509,54 @@ def pagina_gestion_almacenes():
                         st.success(f"✅ Almacén '{nombre_alm}' creado exitosamente.")
                     else:
                         st.error("❌ Error al crear almacén.")
+    
+    with tab3:
+        st.subheader("🗑️ Eliminar Almacén / Aula Taller")
+        st.warning("⚠️ Al eliminar un almacén, los estudiantes asociados a esa aula quedarán sin asignación. Verifique antes de eliminar.")
+        
+        # Filtro para buscar el almacén a eliminar
+        elim_estado = st.selectbox("Filtrar por Estado", options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()), key="alm_elim_est")
+        elim_estado_sel = elim_estado if elim_estado != "Todos" else ""
+        elim_municipios = ["Todos"] + ESTADOS_MUNICIPIOS.get(elim_estado, ["Seleccione"]) if elim_estado != "Todos" else ["Todos"]
+        elim_municipio = st.selectbox("Filtrar por Municipio", options=elim_municipios, key="alm_elim_mun")
+        elim_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_elim_bus")
+        
+        elim_municipio_sel = elim_municipio if elim_municipio != "Todos" else ""
+        almacenes_elim = obtener_almacenes_filtro(elim_estado_sel, elim_municipio_sel, elim_busqueda)
+        
+        if almacenes_elim:
+            df_elim = pd.DataFrame(almacenes_elim, columns=["ID", "Nombre", "Estado", "Municipio", "Aula Taller"])
+            st.dataframe(df_elim, use_container_width=True, hide_index=True)
+            st.caption(f"Mostrando {len(almacenes_elim)} almacén(es). Seleccione el ID a eliminar.")
+            
+            # Selección del ID a eliminar
+            almacen_id_elim = st.number_input("ID del almacén a eliminar", min_value=1, step=1, key="alm_elim_id")
+            
+            # Buscar el almacén seleccionado para mostrar sus datos
+            almacen_seleccionado = None
+            for a in almacenes_elim:
+                if a[0] == almacen_id_elim:
+                    almacen_seleccionado = a
+                    break
+            
+            if almacen_seleccionado:
+                st.info(f"📌 Va a eliminar: **{almacen_seleccionado[1]}** | Estado: {almacen_seleccionado[2]} | Municipio: {almacen_seleccionado[3]} | Aula: {almacen_seleccionado[4]}")
+                
+                confirmar_elim = st.checkbox("✅ Confirmo que deseo eliminar este almacén", key="alm_elim_confirm")
+                
+                if st.button("🗑️ Eliminar Almacén", type="primary", key="btn_elim_almacen"):
+                    if confirmar_elim:
+                        ok = eliminar_almacen(almacen_id_elim)
+                        if ok:
+                            st.success(f"✅ Almacén ID {almacen_id_elim} eliminado exitosamente.")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ No se encontró el almacén con ese ID.")
+                    else:
+                        st.error("❌ Debe marcar la casilla de confirmación antes de eliminar.")
+        else:
+            st.info("No se encontraron almacenes con esos filtros.")
 
 
 # ============================================================
