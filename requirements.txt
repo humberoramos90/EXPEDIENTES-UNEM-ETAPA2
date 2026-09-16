@@ -3,3 +3,4 @@ pandas
 pillow
 openpyxl
 reportlab
+qrcode
