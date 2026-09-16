@@ -4,3 +4,4 @@ pillow
 openpyxl
 reportlab
 qrcode
+python-barcode
