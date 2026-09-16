@@ -1649,7 +1649,7 @@ def mostrar_sidebar():
     
     paginas.append("🚪 Cerrar Sesión")
     
-    pagina = st.sidebar.radio("Navegación", paginas, label_visibility="collapsed")
+    pagina = st.sidebar.radio("Navegación", paginas, label_visibility="collapsed", key="sidebar_nav_radio")
     return pagina
 
 
@@ -1718,7 +1718,11 @@ def pagina_dashboard():
     else:
         st.info("No hay estudiantes registrados aún.")
 
+# ============================================================
+# FLUJO PRINCIPAL DE NAVEGACIÓN
+# ============================================================
 
+# (Bloque main() eliminado — el flujo principal está al final del archivo)
 # ============================================================
 # PÁGINA: REGISTRAR ESTUDIANTE
 # ============================================================
@@ -1739,22 +1743,25 @@ def pagina_registrar_estudiante():
     # --- Cascada Estado → Municipio → Aula Taller ---
     col_estado, col_municipio = st.columns(2)
     
+    def reset_municipio_reg():
+        """Callback: al cambiar el estado, resetea municipio y aula"""
+        st.session_state.pop("reg_municipio_widget", None)
+        st.session_state.pop("reg_aula_widget", None)
+    
     with col_estado:
         lista_estados = list(ESTADOS_MUNICIPIOS.keys())
         estado_sel = st.selectbox(
             "Estado *",
             options=lista_estados,
             index=lista_estados.index(st.session_state.get("reg_estado", lista_estados[0])) if st.session_state.get("reg_estado") in lista_estados else 0,
-            key="reg_estado_widget"
+            key="reg_estado_widget",
+            on_change=reset_municipio_reg
         )
-        # Guardar en session_state
-        if st.session_state.get("reg_estado") != estado_sel:
-            st.session_state["reg_estado"] = estado_sel
-            st.session_state["reg_municipio"] = None  # Reset municipio
+        st.session_state["reg_estado"] = estado_sel
     
     with col_municipio:
         municipios = ESTADOS_MUNICIPIOS.get(estado_sel, [])
-        mun_default = st.session_state.get("reg_municipio")
+        mun_default = st.session_state.get("reg_municipio_widget")
         mun_index = municipios.index(mun_default) if mun_default in municipios else 0
         municipio_sel = st.selectbox(
             "Municipio *",
@@ -1769,7 +1776,9 @@ def pagina_registrar_estudiante():
     aulas_disponibles = [f"{a[1]} ({a[2]}/{a[3]}/{a[4]})" for a in almacenes_lista if a[2] == estado_sel and a[3] == municipio_sel]
     if not aulas_disponibles:
         aulas_disponibles = ["No hay aulas disponibles - cree un almacén primero"]
-    aula_sel = st.selectbox("Aula Taller *", options=aulas_disponibles, key="reg_aula_widget")
+    aula_default = st.session_state.get("reg_aula_widget")
+    aula_index = aulas_disponibles.index(aula_default) if aula_default in aulas_disponibles else 0
+    aula_sel = st.selectbox("Aula Taller *", options=aulas_disponibles, index=aula_index, key="reg_aula_widget")
     st.session_state["reg_aula"] = aula_sel
     
     # --- Cascada Tipo de Programa → Programa ---
@@ -1783,7 +1792,7 @@ def pagina_registrar_estudiante():
         )
         if st.session_state.get("reg_tipo_programa") != tipo_prog_sel:
             st.session_state["reg_tipo_programa"] = tipo_prog_sel
-            st.session_state["reg_programa"] = None  # Reset programa
+            st.session_state.pop("reg_programa", None)  # Reset programa
     
     with col_prog:
         programas = obtener_programas(tipo_prog_sel)
@@ -2314,12 +2323,30 @@ def pagina_listado_estudiantes():
     st.title("📋 Listado de Estudiantes")
     st.markdown("---")
     
+    def reset_municipio_list_est():
+        """Callback: al cambiar el filtro de estado, resetea municipio"""
+        st.session_state.pop("list_municipio", None)
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        filtro_estado = st.selectbox("Filtrar por Estado", options=[""] + list(ESTADOS_MUNICIPIOS.keys()), key="list_estado")
+        filtro_estado = st.selectbox(
+            "Filtrar por Estado",
+            options=[""] + list(ESTADOS_MUNICIPIOS.keys()),
+            key="list_estado",
+            on_change=reset_municipio_list_est
+        )
     with col2:
         municipios = ESTADOS_MUNICIPIOS.get(filtro_estado, []) if filtro_estado else []
-        filtro_municipio = st.selectbox("Filtrar por Municipio", options=[""] + municipios, key="list_municipio")
+        # Recuperar valor previo; si ya no está en la lista, resetear
+        mun_prev_list = st.session_state.get("list_municipio")
+        mun_opts_list = [""] + municipios
+        mun_idx_list = mun_opts_list.index(mun_prev_list) if mun_prev_list in mun_opts_list else 0
+        filtro_municipio = st.selectbox(
+            "Filtrar por Municipio",
+            options=mun_opts_list,
+            index=mun_idx_list,
+            key="list_municipio"
+        )
     with col3:
         filtro_programa = st.selectbox("Filtrar por Programa", options=[""] + obtener_programas("PNF") + obtener_programas("PNFA_E") + obtener_programas("PNFA_M"), key="list_prog")
     
@@ -2471,16 +2498,40 @@ def pagina_gestion_almacenes():
         st.subheader("📋 Almacenes / Aulas Taller Registrados")
         
         # Filtros para buscar fácilmente entre 1000+ registros
+        # --- Cascada de filtros Estado → Municipio ---
+        def reset_municipio_filtro():
+            """Callback: al cambiar el filtro de estado, resetea el filtro de municipio"""
+            st.session_state.pop("alm_filt_mun", None)
+        
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
-            filtro_estado = st.selectbox("Filtrar por Estado", options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()), key="alm_filt_est")
+            filtro_estado = st.selectbox(
+                "Filtrar por Estado",
+                options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()),
+                key="alm_filt_est",
+                on_change=reset_municipio_filtro
+            )
         with col_f2:
-            estado_sel = filtro_estado if filtro_estado != "Todos" else ""
-            municipios_disponibles = ["Todos"] + ESTADOS_MUNICIPIOS.get(filtro_estado, ["Seleccione"]) if filtro_estado != "Todos" else ["Todos"]
-            filtro_municipio = st.selectbox("Filtrar por Municipio", options=municipios_disponibles, key="alm_filt_mun")
+            if filtro_estado != "Todos":
+                municipios_disponibles = ["Todos"] + ESTADOS_MUNICIPIOS.get(filtro_estado, [])
+            else:
+                municipios_disponibles = ["Todos"]
+            # Recuperar valor previo; si ya no está en la lista, resetear
+            municipio_previo_filt = st.session_state.get("alm_filt_mun")
+            if municipio_previo_filt and municipio_previo_filt in municipios_disponibles:
+                mun_index_filt = municipios_disponibles.index(municipio_previo_filt)
+            else:
+                mun_index_filt = 0
+            filtro_municipio = st.selectbox(
+                "Filtrar por Municipio",
+                options=municipios_disponibles,
+                index=mun_index_filt,
+                key="alm_filt_mun"
+            )
         with col_f3:
             filtro_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_filt_bus")
         
+        estado_sel = filtro_estado if filtro_estado != "Todos" else ""
         municipio_sel = filtro_municipio if filtro_municipio != "Todos" else ""
         almacenes = obtener_almacenes_filtro(estado_sel, municipio_sel, filtro_busqueda)
         
@@ -2492,10 +2543,39 @@ def pagina_gestion_almacenes():
             st.info("No se encontraron almacenes con esos filtros.")
     
     with tab2:
+        st.subheader("➕ Crear Nuevo Almacén")
+        
+        # 1. SELECTORES FUERA DEL FORMULARIO (Actualización instantánea)
+        # --- Cascada Estado → Municipio con callback ---
+        def reset_municipio_crear():
+            """Callback: al cambiar el estado, resetea el municipio"""
+            st.session_state.pop("alm_crear_mun", None)
+        
+        estado_alm = st.selectbox(
+            "Estado *",
+            options=list(ESTADOS_MUNICIPIOS.keys()),
+            key="alm_crear_est",
+            on_change=reset_municipio_crear
+        )
+        
+        # Carga dinámica de municipios según el estado elegido
+        municipios_disponibles = ESTADOS_MUNICIPIOS.get(estado_alm, ["Seleccione"])
+        # Recuperar valor previo del municipio; si ya no está en la lista, resetear
+        municipio_previo = st.session_state.get("alm_crear_mun")
+        if municipio_previo and municipio_previo in municipios_disponibles:
+            mun_index_crear = municipios_disponibles.index(municipio_previo)
+        else:
+            mun_index_crear = 0
+        municipio_alm = st.selectbox(
+            "Municipio *",
+            options=municipios_disponibles,
+            index=mun_index_crear,
+            key="alm_crear_mun"
+        )
+        
+        # 2. FORMULARIO SOLO PARA CAMPOS DE TEXTO Y BOTÓN
         with st.form("form_crear_almacen"):
             nombre_alm = st.text_input("Nombre del Almacén *", placeholder="Ej: Aula Taller Principal")
-            estado_alm = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()), key="alm_crear_est")
-            municipio_alm = st.selectbox("Municipio *", options=ESTADOS_MUNICIPIOS.get(estado_alm, ["Seleccione"]), key="alm_crear_mun")
             aula_alm = st.text_input("Aula Taller *", placeholder="Ej: Aula 01")
             
             submitted = st.form_submit_button("✅ Crear Almacén")
@@ -2504,9 +2584,12 @@ def pagina_gestion_almacenes():
                 if not nombre_alm or not aula_alm:
                     st.error("❌ Todos los campos son obligatorios.")
                 else:
+                    # Se envían los valores capturados de los selectores (estado_alm, municipio_alm)
                     ok = crear_almacen(nombre_alm.upper(), estado_alm, municipio_alm, aula_alm.upper())
                     if ok:
                         st.success(f"✅ Almacén '{nombre_alm}' creado exitosamente.")
+                        time.sleep(1)
+                        st.rerun()
                     else:
                         st.error("❌ Error al crear almacén.")
     
@@ -2515,10 +2598,34 @@ def pagina_gestion_almacenes():
         st.warning("⚠️ Al eliminar un almacén, los estudiantes asociados a esa aula quedarán sin asignación. Verifique antes de eliminar.")
         
         # Filtro para buscar el almacén a eliminar
-        elim_estado = st.selectbox("Filtrar por Estado", options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()), key="alm_elim_est")
+        # --- Cascada de filtros Estado → Municipio para eliminar ---
+        def reset_municipio_elim():
+            """Callback: al cambiar el filtro de estado, resetea el filtro de municipio"""
+            st.session_state.pop("alm_elim_mun", None)
+        
+        elim_estado = st.selectbox(
+            "Filtrar por Estado",
+            options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()),
+            key="alm_elim_est",
+            on_change=reset_municipio_elim
+        )
         elim_estado_sel = elim_estado if elim_estado != "Todos" else ""
-        elim_municipios = ["Todos"] + ESTADOS_MUNICIPIOS.get(elim_estado, ["Seleccione"]) if elim_estado != "Todos" else ["Todos"]
-        elim_municipio = st.selectbox("Filtrar por Municipio", options=elim_municipios, key="alm_elim_mun")
+        if elim_estado != "Todos":
+            elim_municipios = ["Todos"] + ESTADOS_MUNICIPIOS.get(elim_estado, [])
+        else:
+            elim_municipios = ["Todos"]
+        # Recuperar valor previo; si ya no está en la lista, resetear
+        elim_mun_previo = st.session_state.get("alm_elim_mun")
+        if elim_mun_previo and elim_mun_previo in elim_municipios:
+            elim_mun_index = elim_municipios.index(elim_mun_previo)
+        else:
+            elim_mun_index = 0
+        elim_municipio = st.selectbox(
+            "Filtrar por Municipio",
+            options=elim_municipios,
+            index=elim_mun_index,
+            key="alm_elim_mun"
+        )
         elim_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_elim_bus")
         
         elim_municipio_sel = elim_municipio if elim_municipio != "Todos" else ""
@@ -2557,7 +2664,6 @@ def pagina_gestion_almacenes():
                         st.error("❌ Debe marcar la casilla de confirmación antes de eliminar.")
         else:
             st.info("No se encontraron almacenes con esos filtros.")
-
 
 # ============================================================
 # PÁGINA: CONFIGURACIÓN DE LISTAS
@@ -2729,7 +2835,7 @@ def pagina_eliminar_registro():
     st.markdown("---")
     
     rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["usuario"]
+    usuario = st.session_state.user_info.get("usuario") or st.session_state.user_info.get("username", "admin")
     
     if rol == 3:
         st.warning("⚠️ Su nivel (Nivel 3 - Secretaría Situada) no puede eliminar registros directamente.")
