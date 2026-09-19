@@ -13,6 +13,7 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 import json
+import re
 # ============================================================
 # CONFIGURACIÓN INICIAL
 # ============================================================
@@ -109,6 +110,7 @@ TIPOS_PROGRAMA_PROGRAMAS = {
         "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA",
         "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL",
         "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL",
         "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL",
         "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA",
         "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA",
@@ -229,6 +231,13 @@ def init_database():
     except sqlite3.OperationalError:
         pass  # La columna ya existe
 
+    # Migración: BACHILLER / TSU (para PNF), período inicial y períodos por año
+    for _col, _def in (("tipo_estudiante", "''"), ("periodo_inicio", "''"), ("periodos_por_anio", "2")):
+        try:
+            c.execute(f"ALTER TABLE expedientes ADD COLUMN {_col} TEXT DEFAULT {_def}")
+        except sqlite3.OperationalError:
+            pass  # La columna ya existe
+
     # Tabla de MALLAS CURRICULARES: las materias (asignaturas) de cada programa,
     # en el orden de trayecto/semestre/trimestre, con sus unidades de crédito (U.C.).
     # 'es_introductorio'=1 marca las materias del trayecto/curso introductorio, que
@@ -241,8 +250,15 @@ def init_database():
         materia TEXT NOT NULL,
         creditos REAL DEFAULT 0,
         es_introductorio INTEGER DEFAULT 0,
+        periodo_orden INTEGER DEFAULT 0,
         UNIQUE(programa, materia)
     )""")
+
+    # Migración: agregar columna 'periodo_orden' a mallas (N° de semestre/trimestre)
+    try:
+        c.execute("ALTER TABLE mallas ADD COLUMN periodo_orden INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # La columna ya existe
 
     # Tabla de NOTAS (calificaciones) de cada estudiante por materia.
     c.execute("""CREATE TABLE IF NOT EXISTS notas (
@@ -347,6 +363,12 @@ def init_database():
                    "Atentamente,\n"
                    "Expedientes UNEM"))
 
+    # Carga inicial (una sola vez) de las mallas oficiales reconocidas
+    try:
+        _seed_mallas_oficiales(c)
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -435,12 +457,16 @@ def registrar_expediente(datos, pdf_file=None):
 
     c.execute("""INSERT INTO expedientes 
         (estado, municipio, aula_taller, nombres, apellidos, cedula, correo_titular,
-         tipo_programa, programa, tipo_expediente, periodo_culminacion, sexo, pdf_path, observaciones, registrado_por)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+         tipo_programa, programa, tipo_expediente, periodo_culminacion, sexo,
+         tipo_estudiante, periodo_inicio, periodos_por_anio,
+         pdf_path, observaciones, registrado_por)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (datos["estado"], datos["municipio"], datos.get("aula_taller", ""),
                datos["nombres"], datos.get("apellidos", ""), datos["cedula"], datos.get("correo_titular", ""),
                datos["tipo_programa"], datos["programa"], datos["tipo_expediente"],
                datos.get("periodo_culminacion", ""), datos.get("sexo", ""),
+               datos.get("tipo_estudiante", ""), datos.get("periodo_inicio", ""),
+               str(datos.get("periodos_por_anio", 2)),
                pdf_path, datos.get("observaciones", ""), datos.get("registrado_por", "")))
 
     expediente_id = c.lastrowid
@@ -889,6 +915,163 @@ ESCUDO_PATHS = ["escudo_venezuela.png", "escudo.png", "logo_unem.png", "logo.png
 # (PNG) a la raiz del repositorio con alguno de estos nombres para que aparezca
 # automaticamente sobre la linea de la firma en la certificacion.
 FIRMA_PATHS = ["firma_lenin_romero.png", "firma_secretario.png", "firma.png", "firma.jpg"]
+SELLO_PATHS = ["sello_secretaria.png", "sello_unem.png", "sello.png"]
+
+_MALLAS_OFICIALES = {
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL": [
+        (1, "SEMESTRE 1", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA I", 9),
+        (1, "SEMESTRE 1", "EDUCACIÓN BOLIVARIANA Y SOCIEDAD", 2),
+        (1, "SEMESTRE 1", "USO SOCIAL DE LA LENGUA", 2),
+        (1, "SEMESTRE 1", "DESARROLLO Y CRECIMIENTO DEL NIÑO Y LA NIÑA EN EL CONTEXTO VENEZOLANO", 3),
+        (1, "SEMESTRE 1", "FORMACIÓN SOCIO CRÍTICA I", 3),
+        (1, "SEMESTRE 1", "GESTIÓN DE RIESGOS Y PROTECCIÓN CIVIL", 3),
+        (2, "SEMESTRE 2", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA II", 8),
+        (2, "SEMESTRE 2", "PEDAGOGÍA TRANSFORMADORA", 3),
+        (2, "SEMESTRE 2", "CIMIENTOS DE LA EDUCACIÓN INICIAL", 3),
+        (2, "SEMESTRE 2", "LAS TICs EN LA EDUCACIÓN BOLIVARIANA", 3),
+        (2, "SEMESTRE 2", "LA ACTIVIDAD FÍSICA, EL JUEGO Y LA RECREACIÓN EN EDUCACIÓN INICIAL", 2),
+        (2, "SEMESTRE 2", "FORMACIÓN SOCIO CRÍTICA II", 3),
+        (2, "SEMESTRE 2", "LENGUAS INDÍGENAS (ELECTIVA)", 3),
+        (3, "SEMESTRE 3", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA III", 9),
+        (3, "SEMESTRE 3", "MATEMÁTICA Y ESTADÍSTICA APLICADA A LO SOCIO EDUCATIVO", 3),
+        (3, "SEMESTRE 3", "EDUCACIÓN Y TERRITORIALIDAD", 3),
+        (3, "SEMESTRE 3", "CURRÍCULO EN EL SISTEMA EDUCATIVO VENEZOLANO", 3),
+        (3, "SEMESTRE 3", "TRADICIONES Y COSTUMBRES DEL PUEBLO VENEZOLANO", 2),
+        (3, "SEMESTRE 3", "AMBIENTE Y SALUD INTEGRAL", 3),
+        (3, "SEMESTRE 3", "FORMACIÓN SOCIO CRÍTICA III", 3),
+        (4, "SEMESTRE 4", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA IV", 8),
+        (4, "SEMESTRE 4", "DESARROLLO SOCIO AFECTIVO Y LA INTELIGENCIA", 3),
+        (4, "SEMESTRE 4", "RESPONSABILIDAD SOCIAL FAMILIA ESCUELA Y COMUNIDAD", 3),
+        (4, "SEMESTRE 4", "EDUCACIÓN SEXUAL Y REPRODUCTIVA", 3),
+        (4, "SEMESTRE 4", "DESEMPEÑO PROFESIONAL DEL DOCENTE DE EDUCACIÓN INICIAL", 2),
+        (4, "SEMESTRE 4", "FORMACIÓN SOCIO CRÍTICA IV", 3),
+        (4, "SEMESTRE 4", "ALIMENTACIÓN SANA Y ALTERNATIVA EN EDUCACIÓN INICIAL (ELECTIVA)", 2),
+        (5, "SEMESTRE 5", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA V", 9),
+        (5, "SEMESTRE 5", "PLANIFICACIÓN Y EVALUACIÓN EN EDUCACIÓN INICIAL", 3),
+        (5, "SEMESTRE 5", "DERECHOS HUMANOS DEL NIÑO Y LA NIÑA EN EL CONTEXTO EDUCATIVO VENEZOLANO", 3),
+        (5, "SEMESTRE 5", "PREVENCIÓN Y ATENCIÓN A LA SALUD INTEGRAL DEL NIÑO Y LA NIÑA", 3),
+        (5, "SEMESTRE 5", "EXPRESIÓN MUSICAL Y CORPORAL", 2),
+        (5, "SEMESTRE 5", "FORMACIÓN SOCIO CRÍTICA V", 3),
+        (5, "SEMESTRE 5", "SABERES ANCESTRALES DE LOS PUEBLOS INDÍGENAS", 2),
+        (6, "SEMESTRE 6", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA VI", 8),
+        (6, "SEMESTRE 6", "EDUCACIÓN MATERNAL, LA GESTACIÓN Y EL PARTO HUMANIZADO", 3),
+        (6, "SEMESTRE 6", "DESARROLLO DE LA LENGUA ORAL Y LENGUA ESCRITA EN NIÑOS DE EDUCACIÓN INICIAL", 3),
+        (6, "SEMESTRE 6", "NECESIDADES EDUCATIVAS ESPECIALES Y ATENCIÓN A LA DIVERSIDAD", 3),
+        (6, "SEMESTRE 6", "EXPRESIÓN TEATRAL Y DANZAS TRADICIONALES DE VENEZUELA", 2),
+        (6, "SEMESTRE 6", "FORMACIÓN SOCIO CRÍTICA VI", 3),
+        (6, "SEMESTRE 6", "CREATIVIDAD E INNOVACIÓN EN EDUCACIÓN INICIAL (ELECTIVA)", 2),
+        (7, "SEMESTRE 7", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA VII", 9),
+        (7, "SEMESTRE 7", "DESARROLLO DE LOS PROCESOS LÓGICO MATEMÁTICOS EN EL NIÑO DE EDUCACIÓN INICIAL", 3),
+        (7, "SEMESTRE 7", "EXPRESIÓN PLÁSTICA DEL NIÑO EN EDUCACIÓN INICIAL", 3),
+        (7, "SEMESTRE 7", "PROMOCIÓN DE LA LECTURA PARA NIÑOS Y NIÑAS DE EDUCACIÓN INICIAL", 2),
+        (7, "SEMESTRE 7", "FORMACIÓN SOCIO CRÍTICA VII", 3),
+        (7, "SEMESTRE 7", "TRANSFORMACIÓN DE MATERIALES Y RECURSOS PARA LA EDUCACIÓN INICIAL", 3),
+        (8, "SEMESTRE 8", "PROYECTO SOCIO INTEGRADOR: PRÁCTICA PROFESIONAL TRANSFORMADORA VIII", 8),
+        (8, "SEMESTRE 8", "PROCESOS ADMINISTRATIVOS EN LA EDUCACIÓN INICIAL EN VENEZUELA", 3),
+        (8, "SEMESTRE 8", "MEDIOS DE COMUNICACIÓN EN EDUCACIÓN INICIAL", 2),
+        (8, "SEMESTRE 8", "FORMACIÓN SOCIO CRÍTICA VIII", 3),
+        (8, "SEMESTRE 8", "CONTINUIDAD AFECTIVA Y ARTICULACIÓN PEDAGÓGICA EN EDUCACIÓN INICIAL (ELECTIVA)", 3),
+        (8, "SEMESTRE 8", "ACTIVIDADES ACADÉMICAS ACREDITABLES", 12),
+    ],
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL": [
+        (5, "SEMESTRE 5", "PROYECTO SOCIO INTEGRADOR V", 7),
+        (5, "SEMESTRE 5", "FORMACIÓN SOCIO CRÍTICA V", 4),
+        (5, "SEMESTRE 5", "EDUCACIÓN INTEGRAL PARA ESCOLARES CON DIFICULTADES DE APRENDIZAJES", 2),
+        (5, "SEMESTRE 5", "EDUCACIÓN INTEGRAL PARA LA PERSONA CON AUTISMO", 3),
+        (5, "SEMESTRE 5", "EVALUACIÓN PARA LA EDUCACIÓN ESPECIAL", 2),
+        (5, "SEMESTRE 5", "ENSEÑANZA Y ADAPTACIONES CURRICULARES PARA LA LECTURA, ESCRITURA Y MATEMÁTICA I", 3),
+        (6, "SEMESTRE 6", "PROYECTO SOCIO INTEGRADOR VI", 9),
+        (6, "SEMESTRE 6", "FORMACIÓN SOCIO CRÍTICA VI", 4),
+        (6, "SEMESTRE 6", "EDUCACIÓN INTEGRAL PARA LAS PERSONAS CON DISCAPACIDAD FÍSICO MOTORA", 3),
+        (6, "SEMESTRE 6", "EDUCACIÓN INTEGRAL PARA LA PERSONA CON ALTA POTENCIALIDAD", 2),
+        (6, "SEMESTRE 6", "ENSEÑANZA Y ADAPTACIONES CURRICULARES PARA LA LECTURA, ESCRITURA Y MATEMÁTICA II", 3),
+        (7, "SEMESTRE 7", "PROYECTO SOCIO INTEGRADOR VII", 9),
+        (7, "SEMESTRE 7", "FORMACIÓN SOCIO CRÍTICA VII", 4),
+        (7, "SEMESTRE 7", "EDUCACIÓN INTEGRAL PARA LAS PERSONAS CON DISCAPACIDAD SENSORIAL Y COMUNICACIONAL", 3),
+        (7, "SEMESTRE 7", "EDUCACIÓN INTEGRAL PARA LAS PERSONAS CON ENFERMEDADES ORGÁNICAS DISCAPACITANTES", 3),
+        (7, "SEMESTRE 7", "PREVENCIÓN Y ATENCIÓN INTEGRAL TEMPRANA", 2),
+        (8, "SEMESTRE 8", "PROYECTO SOCIO INTEGRADOR VIII", 9),
+        (8, "SEMESTRE 8", "FORMACIÓN SOCIO CRÍTICA VIII", 4),
+        (8, "SEMESTRE 8", "ORIENTACIÓN PARA LA INTEGRACIÓN LABORAL Y SOCIO COMUNITARIA", 3),
+        (8, "SEMESTRE 8", "ESTRATEGIAS PARA LA ORIENTACIÓN EDUCATIVA, FAMILIAR Y COMUNITARIA", 3),
+        (8, "SEMESTRE 8", "ADMINISTRACIÓN Y GESTIÓN DE LA EDUCACIÓN ESPECIAL", 3),
+        (8, "SEMESTRE 8", "ACTIVIDADES ACADÉMICAS ACREDITABLES II", 6),
+    ],
+}
+
+
+_ROMANOS = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+
+_NUM_PALABRA = {
+    0: "CERO", 1: "UNO", 2: "DOS", 3: "TRES", 4: "CUATRO", 5: "CINCO",
+    6: "SEIS", 7: "SIETE", 8: "OCHO", 9: "NUEVE", 10: "DIEZ",
+    11: "ONCE", 12: "DOCE", 13: "TRECE", 14: "CATORCE", 15: "QUINCE",
+    16: "DIECISÉIS", 17: "DIECISIETE", 18: "DIECIOCHO", 19: "DIECINUEVE", 20: "VEINTE",
+}
+
+
+def _calificacion_texto(nota):
+    """Devuelve 'NN PALABRA' para notas numéricas 1-20; deja tal cual textos como
+    APROBADO, AC, POR CURSAR."""
+    s = str(nota or "").strip()
+    if s == "":
+        return ""
+    try:
+        n = int(float(s))
+        pal = _NUM_PALABRA.get(n, "")
+        return f"{n} {pal}".strip()
+    except (ValueError, TypeError):
+        return s.upper()
+
+
+def _orden_desde_periodo(texto, grupo_idx):
+    """Extrae el número de semestre/trimestre del texto del período (p.ej.
+    'TRAYECTO 3 - SEMESTRE 5' -> 5). Si no hay número, usa el índice de grupo."""
+    nums = re.findall(r"\d+", str(texto or ""))
+    if nums:
+        return int(nums[-1])
+    return grupo_idx
+
+
+def _parse_periodo_inicio(txt):
+    """'2020-I' o '2020-1' -> (2020, 1). Devuelve None si no se puede leer."""
+    t = str(txt or "").strip().upper().replace(" ", "")
+    m = re.match(r"(\d{4})[-/._]?([IVX]+|\d+)$", t)
+    if not m:
+        m2 = re.match(r"(\d{4})", t)
+        if m2:
+            return int(m2.group(1)), 1
+        return None
+    year = int(m.group(1))
+    p = m.group(2)
+    if p.isdigit():
+        idx = int(p)
+    else:
+        idx = _ROMANOS.index(p) if p in _ROMANOS else 1
+    return year, idx
+
+
+def _secuencia_periodos(inicio_txt, ppa, cantidad):
+    """Genera 'cantidad' códigos de período consecutivos desde 'inicio_txt'
+    (p.ej. 2020-I), rodando al año siguiente cada 'ppa' períodos."""
+    parsed = _parse_periodo_inicio(inicio_txt)
+    if not parsed or cantidad <= 0:
+        return []
+    year, idx = parsed
+    ppa = int(ppa) if ppa and int(ppa) >= 1 else 2
+    if idx > ppa:
+        idx = 1
+    out = []
+    for _ in range(cantidad):
+        rom = _ROMANOS[idx] if idx < len(_ROMANOS) else str(idx)
+        out.append(f"{year}-{rom}")
+        idx += 1
+        if idx > ppa:
+            idx = 1
+            year += 1
+    return out
+
+
 _MESES_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
              "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
@@ -935,15 +1118,16 @@ def obtener_malla(programa, incluir_introductorio=True):
     conn = get_db()
     c = conn.cursor()
     if incluir_introductorio:
-        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio
+        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio, periodo_orden
                      FROM mallas WHERE programa=? ORDER BY orden, id""", (programa,))
     else:
-        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio
+        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio, periodo_orden
                      FROM mallas WHERE programa=? AND es_introductorio=0 ORDER BY orden, id""", (programa,))
     filas = c.fetchall()
     conn.close()
     return [{"orden": r[0], "periodo": r[1] or "", "materia": r[2],
-             "creditos": r[3] or 0, "es_introductorio": int(r[4] or 0)} for r in filas]
+             "creditos": r[3] or 0, "es_introductorio": int(r[4] or 0),
+             "periodo_orden": int(r[5] or 0)} for r in filas]
 
 
 def guardar_materia_malla(programa, periodo, materia, creditos, es_introductorio, orden=None):
@@ -954,15 +1138,15 @@ def guardar_materia_malla(programa, periodo, materia, creditos, es_introductorio
         c.execute("SELECT COALESCE(MAX(orden),0)+1 FROM mallas WHERE programa=?", (programa,))
         orden = c.fetchone()[0]
     try:
-        c.execute("""INSERT INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio)
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  (programa, int(orden), periodo, materia, float(creditos or 0), int(es_introductorio)))
+        c.execute("""INSERT INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio, periodo_orden)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (programa, int(orden), periodo, materia, float(creditos or 0), int(es_introductorio), _orden_desde_periodo(periodo, int(orden))))
         ok = True
     except sqlite3.IntegrityError:
         # Ya existe esa materia en ese programa -> actualizar
-        c.execute("""UPDATE mallas SET orden=?, periodo=?, creditos=?, es_introductorio=?
+        c.execute("""UPDATE mallas SET orden=?, periodo=?, creditos=?, es_introductorio=?, periodo_orden=?
                      WHERE programa=? AND materia=?""",
-                  (int(orden), periodo, float(creditos or 0), int(es_introductorio), programa, materia))
+                  (int(orden), periodo, float(creditos or 0), int(es_introductorio), _orden_desde_periodo(periodo, int(orden)), programa, materia))
         ok = True
     conn.commit()
     conn.close()
@@ -984,14 +1168,42 @@ def reemplazar_malla(programa, filas):
     c = conn.cursor()
     c.execute("DELETE FROM mallas WHERE programa=?", (programa,))
     orden = 1
+    _grupo = 0
+    _periodo_prev = None
     for f in filas:
-        c.execute("""INSERT OR IGNORE INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio)
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  (programa, orden, f.get("periodo", ""), f.get("materia", ""),
-                   float(f.get("creditos", 0) or 0), int(f.get("es_introductorio", 0))))
+        _per = f.get("periodo", "")
+        if _per != _periodo_prev:
+            _grupo += 1
+            _periodo_prev = _per
+        _po = _orden_desde_periodo(_per, _grupo)
+        c.execute("""INSERT OR IGNORE INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio, periodo_orden)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (programa, orden, _per, f.get("materia", ""),
+                   float(f.get("creditos", 0) or 0), int(f.get("es_introductorio", 0)), int(_po)))
         orden += 1
     conn.commit()
     conn.close()
+
+
+def _seed_mallas_oficiales(c):
+    """Carga UNA sola vez las mallas oficiales reconocidas de los documentos
+    aprobados (Educación Inicial completa; Educación Especial Trayectos 3-4 / TSU).
+    Usa un sello de versión y no pisa mallas que el administrador ya tenga."""
+    VERSION = "mallas_oficiales_v1"
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='meta' AND categoria_padre='mallas_seed' AND valor=?", (VERSION,))
+    if c.fetchone()[0] > 0:
+        return
+    for prog, filas in _MALLAS_OFICIALES.items():
+        c.execute("SELECT COUNT(*) FROM mallas WHERE programa=?", (prog,))
+        if c.fetchone()[0] > 0:
+            continue
+        orden = 1
+        for (po, per, mat, uc) in filas:
+            c.execute("""INSERT OR IGNORE INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio, periodo_orden)
+                         VALUES (?, ?, ?, ?, ?, 0, ?)""",
+                      (prog, orden, per, mat, float(uc), int(po)))
+            orden += 1
+    c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES ('meta','mallas_seed',?)", (VERSION,))
 
 
 def obtener_programas_con_malla():
@@ -1040,10 +1252,11 @@ def guardar_notas(cedula, programa, notas_por_materia):
 
 
 def generar_certificado_pdf(row):
-    """CERTIFICACIÓN DE CALIFICACIONES en PDF: escudo, título según el género,
-    tabla de asignaturas con Unidades de Crédito (U.C.) y calificaciones tomadas
-    de la malla del programa (en orden y SIN las materias introductorias),
-    firma del Secretario, código QR y código de barras."""
+    """CERTIFICACION DE CALIFICACIONES alineada al MODELO OFICIAL de la UNEM:
+    encabezado con escudo y serial, parrafo del Secretario, tabla
+    Periodo / Unidad Curricular / U.C. / Calificacion (numero + palabra),
+    nota de escala, parrafo especial para TSU, firma y sello reales,
+    y representante de la Secretaria del estado."""
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
@@ -1065,147 +1278,207 @@ def generar_certificado_pdf(row):
     margen = 18 * mm
     x0, x1 = margen, ancho - margen
     centro = ancho / 2
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
 
-    nombre_completo = f"{_g('nombres')} {_g('apellidos')}".strip()
+    nombre_completo = (_g("nombres") + " " + _g("apellidos")).strip()
     cedula = _g("cedula")
-    tipo_programa = _g("tipo_programa")
     programa = _g("programa")
     estado = _g("estado")
     municipio = _g("municipio")
     sexo = _g("sexo")
-    periodo = _g("periodo_culminacion") or "No especificado"
+    tipo_estudiante = _g("tipo_estudiante").upper()
+    es_tsu = "TSU" in tipo_estudiante
+    periodo_inicio = _g("periodo_inicio")
+    try:
+        ppa = int(float(_g("periodos_por_anio") or 2))
+    except (ValueError, TypeError):
+        ppa = 2
+    if ppa < 1:
+        ppa = 2
     fecha_emision = _fecha_larga_es()
     titulo_grado = titulo_por_genero(programa, sexo)
+    _ced_alnum = "".join(ch for ch in cedula if ch.isalnum())
+    serial = str(datetime.now().year) + "-I-" + _ced_alnum
 
     malla = obtener_malla(programa, incluir_introductorio=False)
     notas = obtener_notas(cedula)
 
+    pos = []
+    for m in malla:
+        po = int(m.get("periodo_orden") or 0)
+        if po not in pos:
+            pos.append(po)
+    pos_sorted = sorted(p for p in pos if p > 0)
+    codigos = _secuencia_periodos(periodo_inicio, ppa, len(pos_sorted)) if periodo_inicio else []
+    po_code = {}
+    for i, po in enumerate(pos_sorted):
+        po_code[po] = codigos[i] if i < len(codigos) else ""
+
     escudo = next((p for p in ESCUDO_PATHS if os.path.exists(p)), None)
     firma = next((p for p in FIRMA_PATHS if os.path.exists(p)), None)
+    sello = next((p for p in SELLO_PATHS if os.path.exists(p)), None)
+
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+
+    def _wrap(texto, fuente, tam, ancho_max):
+        out, linea = [], ""
+        for w in str(texto).split():
+            prueba = (linea + " " + w).strip()
+            if stringWidth(prueba, fuente, tam) <= ancho_max or not linea:
+                linea = prueba
+            else:
+                out.append(linea); linea = w
+        if linea:
+            out.append(linea)
+        return out
+
+    def _timbre(y):
+        c.setFont("Helvetica", 7)
+        c.setFillColorRGB(0.35, 0.35, 0.35)
+        c.drawString(x0, y, "TIMBRE FISCAL")
+        c.drawRightString(x1, y, serial)
+        c.setFillColorRGB(0, 0, 0)
+        return y - 4 * mm
 
     def _encabezado(y):
+        y = _timbre(y)
         if escudo:
             try:
-                ew, eh = 22 * mm, 24 * mm
+                ew, eh = 20 * mm, 22 * mm
                 c.drawImage(ImageReader(escudo), centro - ew / 2, y - eh,
                             width=ew, height=eh, preserveAspectRatio=True, mask="auto")
                 y -= eh + 2 * mm
             except Exception:
                 y -= 2 * mm
-        c.setFont("Helvetica-Bold", 10.5)
-        c.drawCentredString(centro, y, "REPÚBLICA BOLIVARIANA DE VENEZUELA")
-        y -= 4.5 * mm
-        c.setFont("Helvetica", 9)
-        c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio “Samuel Robinson”")
-        y -= 4 * mm
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(centro, y, "REP\u00daBLICA BOLIVARIANA DE VENEZUELA")
+        y -= 4.2 * mm
         c.setFont("Helvetica", 8.5)
-        c.drawCentredString(centro, y, "Secretaría")
-        y -= 8 * mm
-        c.setFont("Helvetica-Bold", 13)
-        c.drawCentredString(centro, y, "CERTIFICACIÓN DE CALIFICACIONES")
-        y -= 8 * mm
+        c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio \u201cSamuel Robinson\u201d")
+        y -= 3.8 * mm
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(centro, y, "Secretar\u00eda")
+        y -= 7 * mm
+        c.setFont("Helvetica-Bold", 12.5)
+        c.drawCentredString(centro, y, "CERTIFICACI\u00d3N DE CALIFICACIONES")
+        y -= 7 * mm
         return y
+
+    col_uc = x1 - 30 * mm
+    col_calif = x1
 
     def _cab_tabla(y):
         c.setFillColorRGB(0.12, 0.16, 0.5)
         c.rect(x0, y - 6 * mm, x1 - x0, 6 * mm, fill=1, stroke=0)
         c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawString(x0 + 2 * mm, y - 4.2 * mm, "N°")
-        c.drawString(x0 + 12 * mm, y - 4.2 * mm, "ASIGNATURA")
-        c.drawRightString(x1 - 22 * mm, y - 4.2 * mm, "U.C.")
-        c.drawRightString(x1 - 2 * mm, y - 4.2 * mm, "CALIF.")
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(x0 + 2 * mm, y - 4.2 * mm, "Per\u00edodo")
+        c.drawString(x0 + 20 * mm, y - 4.2 * mm, "Nombre de la Unidad Curricular")
+        c.drawRightString(col_uc, y - 4.2 * mm, "U.C.")
+        c.drawRightString(col_calif - 2 * mm, y - 4.2 * mm, "Calificaci\u00f3n")
         c.setFillColorRGB(0, 0, 0)
         return y - 6 * mm
 
     y = _encabezado(alto - margen)
-    intro = (f"Quien suscribe, Secretario de la Universidad Nacional Experimental del "
-             f"Magisterio “Samuel Robinson”, certifica que el/la ciudadano(a) "
-             f"{nombre_completo}, titular de la Cédula de Identidad N° {cedula}, cursó "
-             f"y aprobó las asignaturas que se detallan, correspondientes al programa de "
-             f"{titulo_grado}, en el Estado {estado}, Municipio {municipio}, período de "
-             f"culminación {periodo}:")
-    palabras = intro.split()
-    linea, lineas = "", []
-    for w in palabras:
-        prueba = (linea + " " + w).strip()
-        if stringWidth(prueba, "Helvetica", 9.5) <= (x1 - x0) or not linea:
-            linea = prueba
-        else:
-            lineas.append(linea); linea = w
-    if linea:
-        lineas.append(linea)
-    c.setFont("Helvetica", 9.5)
-    for ln in lineas:
-        c.drawString(x0, y, ln); y -= 5 * mm
+
+    intro = ("Quien suscribe LENIN ROBERTO ROMERO ROSA, titular de la C\u00e9dula de identidad "
+             "No. V-2.956.814, secretario de la Universidad Nacional Experimental del "
+             "Magisterio \u201cSamuel Robinson\u201d, con asiento principal en la ciudad de Caracas, "
+             "Distrito Capital, Venezuela, certifica que en el Expediente Acad\u00e9mico "
+             "Estudiantil UNEM correspondiente a " + nombre_completo + ", C\u00e9dula de Identidad "
+             "No. " + cedula + ", quien curs\u00f3 estudios en el Programa Nacional de Formaci\u00f3n en "
+             "Educaci\u00f3n para optar al T\u00edtulo de " + titulo_grado + ", en el Estado " + estado + ", "
+             "municipio " + municipio + ", se encuentra su registro acad\u00e9mico en donde consta "
+             "que curs\u00f3 y aprob\u00f3 las Unidades Curriculares que se especifican a continuaci\u00f3n:")
+    c.setFont("Helvetica", 9)
+    for ln in _wrap(intro, "Helvetica", 9, x1 - x0):
+        c.drawString(x0, y, ln); y -= 4.6 * mm
     y -= 3 * mm
 
     y = _cab_tabla(y)
     total_uc = 0.0
-    n = 0
-    fila_alto = 5.6 * mm
-    periodo_actual = None
+    fila_alto = 5.4 * mm
+    ancho_mat = (col_uc - 3 * mm) - (x0 + 20 * mm)
     if not malla:
         c.setFont("Helvetica-Oblique", 9)
-        c.drawString(x0 + 2 * mm, y - 4.5 * mm, "(Aún no hay malla curricular cargada para este programa.)")
+        c.drawString(x0 + 2 * mm, y - 4 * mm, "(A\u00fan no hay malla curricular cargada para este programa.)")
         y -= fila_alto
     for m in malla:
-        if y < margen + 58 * mm:
+        nota_raw = notas.get(m["materia"], "")
+        calif = _calificacion_texto(nota_raw) if nota_raw else "POR CURSAR"
+        mat_lines = _wrap(m["materia"], "Helvetica", 8, ancho_mat) or [""]
+        alto_fila = max(fila_alto, len(mat_lines) * 3.6 * mm + 2 * mm)
+        if y - alto_fila < margen + 62 * mm:
             c.showPage()
             y = _encabezado(alto - margen)
             y = _cab_tabla(y)
-            periodo_actual = None
-        if m["periodo"] and m["periodo"] != periodo_actual:
-            periodo_actual = m["periodo"]
-            c.setFillColorRGB(0.90, 0.92, 0.98)
-            c.rect(x0, y - 5 * mm, x1 - x0, 5 * mm, fill=1, stroke=0)
-            c.setFillColorRGB(0, 0, 0)
-            c.setFont("Helvetica-Bold", 8)
-            c.drawString(x0 + 2 * mm, y - 3.6 * mm, periodo_actual)
-            y -= 5 * mm
-        n += 1
+        po = int(m.get("periodo_orden") or 0)
+        cod = po_code.get(po, "")
         uc = float(m["creditos"] or 0)
         total_uc += uc
-        nota = notas.get(m["materia"], "")
-        c.setFont("Helvetica", 8.5)
-        c.drawString(x0 + 2 * mm, y - 4 * mm, str(n))
-        materia_txt = m["materia"]
-        limite = (x1 - 26 * mm) - (x0 + 12 * mm)
-        if stringWidth(materia_txt, "Helvetica", 8.5) > limite:
-            while materia_txt and stringWidth(materia_txt + "…", "Helvetica", 8.5) > limite:
-                materia_txt = materia_txt[:-1]
-            materia_txt = materia_txt.rstrip() + "…"
-        c.drawString(x0 + 12 * mm, y - 4 * mm, materia_txt)
-        c.drawRightString(x1 - 22 * mm, y - 4 * mm, (f"{uc:g}" if uc else "-"))
-        c.drawRightString(x1 - 2 * mm, y - 4 * mm, str(nota) if nota else "-")
-        c.setStrokeColorRGB(0.8, 0.8, 0.8)
-        c.setLineWidth(0.3)
-        c.line(x0, y - fila_alto, x1, y - fila_alto)
-        y -= fila_alto
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(x0 + 2 * mm, y - 4.5 * mm, "TOTAL UNIDADES DE CRÉDITO")
-    c.drawRightString(x1 - 22 * mm, y - 4.5 * mm, f"{total_uc:g}")
+        yb = y - 4 * mm
+        c.setFont("Helvetica", 8)
+        c.drawString(x0 + 2 * mm, yb, cod)
+        for i, ml in enumerate(mat_lines):
+            c.drawString(x0 + 20 * mm, yb - i * 3.6 * mm, ml)
+        c.drawRightString(col_uc, yb, ("%g" % uc if uc else "-"))
+        c.setFont("Helvetica", 7.5)
+        c.drawRightString(col_calif - 2 * mm, yb, calif)
+        c.setStrokeColorRGB(0.8, 0.8, 0.8); c.setLineWidth(0.3)
+        c.line(x0, y - alto_fila, x1, y - alto_fila)
+        y -= alto_fila
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(x0 + 2 * mm, y - 4.5 * mm, "TOTAL UNIDADES DE CR\u00c9DITO")
+    c.drawRightString(col_uc, y - 4.5 * mm, "%g" % total_uc)
     y -= 11 * mm
 
-    if y < margen + 50 * mm:
-        c.showPage()
-        y = alto - margen - 12 * mm
+    if y < margen + 72 * mm:
+        c.showPage(); y = _encabezado(alto - margen)
+    nota_escala = ("Se expone en la certificaci\u00f3n solamente las unidades curriculares "
+                   "cursadas y aprobadas en el periodo respectivo. La escala de calificaci\u00f3n "
+                   "es del 1 al 20 con m\u00ednima aprobatoria 12 (doce). Son consideradas tambi\u00e9n "
+                   "las calificaciones de AP \u201cAprobado\u201d, AC \u201cAprobada por Acreditaci\u00f3n\u201d.")
+    c.setFont("Helvetica", 8)
+    for ln in _wrap(nota_escala, "Helvetica", 8, x1 - x0):
+        c.drawString(x0, y, ln); y -= 4 * mm
+    y -= 2 * mm
 
-    c.setFont("Helvetica-Oblique", 8.5)
-    c.drawString(x0, y, f"Certificación que se expide a petición de la parte interesada, en Caracas el {fecha_emision}.")
-    y -= 18 * mm
+    if es_tsu:
+        parr_tsu = ("Estas Notas Certificadas pertenecen a un Profesional al cual se le "
+                    "reconoci\u00f3 dos trayectos (T1 y T2) y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
+                    "trayectos (T3 y T4) de la malla del Plan de Estudios para obtener el "
+                    "T\u00edtulo de: " + titulo_grado + " y as\u00ed dar cumplimiento a la resoluci\u00f3n del "
+                    "Consejo Directivo No: 083.12.2022.")
+        c.setFont("Helvetica", 8)
+        for ln in _wrap(parr_tsu, "Helvetica", 8, x1 - x0):
+            c.drawString(x0, y, ln); y -= 4 * mm
+        y -= 2 * mm
+
+    cierre = ("Certificaci\u00f3n que se expide a petici\u00f3n de la parte interesada a los "
+              "efectos y fines consiguientes, en Caracas el " + fecha_emision + ".")
+    c.setFont("Helvetica", 8.5)
+    for ln in _wrap(cierre, "Helvetica", 8.5, x1 - x0):
+        c.drawString(x0, y, ln); y -= 4.4 * mm
+    y -= 14 * mm
+
+    if y < margen + 48 * mm:
+        c.showPage(); y = alto - margen - 20 * mm
 
     if firma:
         try:
-            fw, fh = 45 * mm, 18 * mm
+            fw, fh = 42 * mm, 17 * mm
             c.drawImage(ImageReader(firma), centro - fw / 2, y, width=fw, height=fh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
-    c.setStrokeColorRGB(0, 0, 0)
-    c.setLineWidth(0.7)
+    if sello:
+        try:
+            sw, sh = 30 * mm, 30 * mm
+            c.drawImage(ImageReader(sello), centro + 18 * mm, y - 6 * mm, width=sw, height=sh,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+    c.setStrokeColorRGB(0, 0, 0); c.setLineWidth(0.7)
     c.line(centro - 40 * mm, y, centro + 40 * mm, y)
     y -= 4.5 * mm
     c.setFont("Helvetica-Bold", 9.5)
@@ -1213,34 +1486,46 @@ def generar_certificado_pdf(row):
     y -= 4 * mm
     c.setFont("Helvetica", 8.5)
     c.drawCentredString(centro, y, "SECRETARIO")
-    y -= 4 * mm
+    y -= 3.8 * mm
     c.setFont("Helvetica", 7.5)
-    c.drawCentredString(centro, y, "Según Gaceta N° 41.632 - Resolución Conjunta N° 0026/002")
-    y -= 5 * mm
-    c.setFont("Helvetica-Oblique", 7)
-    c.drawCentredString(centro, y, "Válido solo con el sello húmedo regional y la firma autógrafa del responsable de la secretaría del estado.")
+    c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio \u201cSamuel Robinson\u201d")
+    y -= 3.5 * mm
+    c.drawCentredString(centro, y, "Seg\u00fan Gaceta No: 41.632   Resoluci\u00f3n Conjunta No. 0026/002")
+    y -= 13 * mm
 
-    qr_texto = (f"UNEM - CERTIFICACION DE CALIFICACIONES\nNombres: {nombre_completo}\n"
-                f"Titulo: {titulo_grado}\nCedula: {cedula}\nPeriodo: {periodo}\n"
-                f"Estado: {estado}\nEmision: {fecha_emision}")
-    y_pie = margen + 4 * mm
-    qrw = QrCodeWidget(qr_texto)
-    b = qrw.getBounds()
-    qsize = 24 * mm
-    d = Drawing(qsize, qsize, transform=[qsize / (b[2] - b[0]), 0, 0, qsize / (b[3] - b[1]), 0, 0])
-    d.add(qrw)
-    renderPDF.draw(d, c, x0, y_pie)
-    c.setFont("Helvetica", 6.5)
-    c.drawString(x0, y_pie - 3.5 * mm, "Escanee el QR para verificar los datos")
+    c.setStrokeColorRGB(0, 0, 0); c.setLineWidth(0.6)
+    c.line(x0, y, x0 + 70 * mm, y)
+    y -= 4 * mm
+    c.setFont("Helvetica", 8)
+    c.drawString(x0, y, "Representante de la Secretar\u00eda")
+    y -= 3.6 * mm
+    c.drawString(x0, y, "del Estado " + estado)
 
-    cod = "".join(ch for ch in cedula if ch.isalnum()) or "0"
+    qr_texto = ("UNEM - CERTIFICACION DE CALIFICACIONES\n" +
+                "Nombres: " + nombre_completo + "\n" +
+                "Titulo: " + titulo_grado + "\n" +
+                "Cedula: " + cedula + "\n" +
+                "Estado: " + estado + "\n" +
+                "Serial: " + serial + "\n" +
+                "Emision: " + fecha_emision)
+    y_pie = margen + 2 * mm
     try:
-        barcode = code128.Code128(cod, barHeight=14 * mm, barWidth=0.42 * mm)
-        barcode.drawOn(c, x1 - barcode.width, y_pie + 4 * mm)
+        qrw = QrCodeWidget(qr_texto)
+        b = qrw.getBounds()
+        qsize = 22 * mm
+        d = Drawing(qsize, qsize, transform=[qsize / (b[2] - b[0]), 0, 0, qsize / (b[3] - b[1]), 0, 0])
+        d.add(qrw)
+        renderPDF.draw(d, c, x0, y_pie)
+    except Exception:
+        pass
+    cod = _ced_alnum or "0"
+    try:
+        barcode = code128.Code128(cod, barHeight=12 * mm, barWidth=0.4 * mm)
+        barcode.drawOn(c, x1 - barcode.width, y_pie + 3 * mm)
     except Exception:
         pass
     c.setFont("Helvetica", 7)
-    c.drawRightString(x1, y_pie, f"Código: {cod}")
+    c.drawRightString(x1, y_pie, "Serial: " + serial)
 
     c.showPage()
     c.save()
@@ -1676,6 +1961,14 @@ elif menu == "📝 Registrar Expediente":
             sexo_sel = st.selectbox("⚧ SEXO / GÉNERO *", ["— Seleccione —", "FEMENINO", "MASCULINO"],
                                     help="Se usa para redactar el título (LICENCIADA/LICENCIADO, DOCTORA/DOCTOR, etc.)")
             periodo_culminacion = st.text_input("📅 PERÍODO DE CULMINACIÓN", placeholder="Ej: 2024-II (para egresados / certificación)")
+            tipo_estudiante_sel = st.selectbox(
+                "🎓 TIPO DE INGRESO *",
+                ["— Seleccione —", "BACHILLER (desde el 1er semestre)", "TSU / PNF (se le reconocen T1 y T2)"],
+                help="BACHILLER: inicia en el primer semestre. TSU/PNF: se le reconocen los dos primeros trayectos (T1 y T2) e inicia en el 5.º semestre.")
+            periodo_inicio = st.text_input("🗓️ PERÍODO DE INICIO", placeholder="Ej: 2020-I (el sistema continúa la secuencia)",
+                                           help="Escriba solo el primer período. El sistema genera automáticamente los siguientes (…-II, luego año+1-I).")
+            periodos_por_anio_sel = st.selectbox("🔁 PERÍODOS POR AÑO", [2, 3, 4], index=0,
+                                                 help="2 = semestral, 3 = trimestral por trayecto, 4 = trimestral.")
             observaciones = st.text_area("💬 OBSERVACIONES", placeholder="Observaciones adicionales...", height=120)
 
         pdf_file = st.file_uploader("📄 EXPEDIENTE DIGITAL (PDF) - Máximo 5MB *",
@@ -1717,6 +2010,9 @@ elif menu == "📝 Registrar Expediente":
                     "tipo_expediente": tipo_exp_real,
                     "periodo_culminacion": periodo_culminacion.strip().upper(),
                     "sexo": ("" if sexo_sel == "— Seleccione —" else sexo_sel),
+                    "tipo_estudiante": ("TSU" if tipo_estudiante_sel.startswith("TSU") else ("BACHILLER" if tipo_estudiante_sel.startswith("BACHILLER") else "")),
+                    "periodo_inicio": periodo_inicio.strip().upper(),
+                    "periodos_por_anio": int(periodos_por_anio_sel),
                     "observaciones": observaciones.strip(),
                     "registrado_por": st.session_state.usuario,
                 }
