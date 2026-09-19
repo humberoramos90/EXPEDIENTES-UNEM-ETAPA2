@@ -1,78 +1,71 @@
-# -*- coding: utf-8 -*-
-"""
-Expedientes UNEM - Etapa 2  v2.2
-Sistema de Gestión de Expedientes Estudiantiles y Certificaciones de Calificaciones
-Universidad Nacional Experimental del Magisterio "Samuel Robinson"
-
-Niveles de usuario:
-  - Nivel 1: Admin Principal
-  - Nivel 2: Secretaría General
-  - Nivel 3: Secretaría Situada
-
-Mejoras v2.2 (sobre v2.1):
- 13) APERTURA NACIONAL/ESTADAL/MUNICIPAL/POR PLANTEL: Nivel 1 aperturación jerárquica
- 14) ELIMINAR REGISTRO CON AUTORIZACIÓN: Nivel 1-2 eliminan directo; Nivel 3 solicita autorización
- 15) REPORTE DE AUTORIZACIONES Y ELIMINACIONES: descargable en Excel
-
-Mejoras v2.1:
-  1) AUTO-LETRAS: nota numérica → se escribe en letras automáticamente
-  2) APERTURA/CIERRE DE NOTAS: periodos de carga de notas controlados por Admin
-  3) BATCH PRINTING: generar certificaciones en lote (ZIP con PDFs individuales)
-  4) PNF DUAL VIEW: TSU ve solo trayectos Tercer+; BACHILLER ve todo
-  5) PNFA_E SUB-OPCIONES: proviene de PNF previo o de otra institución
-  6) PNFA_M PRERREQUISITO: requiere cédula de Especialización registrada
-  7) PNFA_D PRERREQUISITOS: requiere cédula de Especialización Y Maestría
-  8) VERIFICAR EXPEDIENTE ETAPA 1: consulta read-only a expedientes.db
-  9) TITULARIDAD POR GÉNERO: Profesor/Profesora, Doctor/Doctora, etc.
- 10) CAMBIO DE CONTRASEÑA: pestaña nueva en Gestión de Usuarios
- 11) CASCADA DINÁMICA: Estado→Municipio→Aula y Tipo→Programa se actualizan al cambiar
- 12) RESPALDO Y EXPORTACIÓN: descargar base de datos (.db), exportar a Excel (.xlsx),
-     restaurar respaldo, y descargar base de Etapa 1
-"""
-
 import streamlit as st
 import sqlite3
 import hashlib
 import os
-import io
-import re
 import time
-import zipfile
-from datetime import datetime, date
+from datetime import datetime
 import pandas as pd
 from io import BytesIO
-
-# --- Librerías para PDF (certificaciones) ---
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch, mm, cm
-from reportlab.lib.colors import HexColor, black, white, gray
-from reportlab.pdfgen import canvas as pdf_canvas
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY, TA_RIGHT
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.utils import ImageReader
-
-# --- Librerías para QR y Barcode ---
-import qrcode
-from barcode import Code128
-from barcode.writer import ImageWriter
-
-# --- Librería para firma digital (watermark) ---
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
+import zipfile
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+import json
 # ============================================================
 # CONFIGURACIÓN INICIAL
 # ============================================================
+st.set_page_config(
+    page_title="Expedientes UNEM",
+    page_icon="📋",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-DB_FILE = "expedientes_unem.db"
-DB_FILE_ETAPA1 = "expedientes.db"
+# Ocultar barra superior, menú nativo, toolbar de desarrollador y footer
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    .stActionButton {display: none !important;}
+    div[class*="stAppToolbar"] {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
+    [data-testid="stHeader"] {background: transparent !important;}
+    /* Forzar que el menu lateral SIEMPRE este visible y no se pueda esconder */
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+        transform: none !important;
+        margin-left: 0 !important;
+        min-width: 240px !important;
+        width: 240px !important;
+    }
+    section[data-testid="stSidebar"][aria-expanded="false"] {
+        transform: none !important;
+        margin-left: 0 !important;
+        width: 240px !important;
+        min-width: 240px !important;
+    }
+    /* Mantener visible la flecha para abrir el menu, por si acaso */
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"] {display: flex !important; visibility: visible !important; opacity: 1 !important;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+DB_FILE = "expedientes.db"
 UPLOAD_FOLDER = "uploads_pdfs"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 MAX_PDF_SIZE = 5 * 1024 * 1024  # 5MB
 
+# Correo por defecto (Admin lo configura después)
+SMTP_CONFIG_FILE = "smtp_config.json"
+EMAIL_TEMPLATES_FILE = "email_templates.json"
 # ============================================================
-# DATOS DE VENEZUELA - 24 Estados y Municipios
+# DATOS DE VENEZUELA
 # ============================================================
 
 ESTADOS_MUNICIPIOS = {
@@ -102,3231 +95,2521 @@ ESTADOS_MUNICIPIOS = {
     "Zulia": ["Almirante Padilla", "Baralt", "Cabimas", "Catatumbo", "Colón", "Francisco Javier Pulgar", "Guajira", "Jesús Enrique Lossada", "Jesús María Semprún", "La Cañada de Urdaneta", "Lagunillas", "Machiques de Perijá", "Mara", "Maracaibo", "Miranda", "Rosario de Perijá", "San Francisco", "Santa Rita", "Simón Bolívar", "Sucre", "Valmore Rodríguez"],
 }
 
-
-
-# ============================================================
-# TIPOS DE PROGRAMA Y PROGRAMAS POR DEFECTO
-# ============================================================
-
-TIPOS_PROGRAMA = ["PNF", "PNFA_E", "PNFA_M", "PNFA_D"]
-
-PROGRAMAS_POR_DEFECTO = {
+TIPOS_PROGRAMA_PROGRAMAS = {
     "PNF": [
-        "LICENCIADO EN EDUCACIÓN INICIAL",
-        "LICENCIADO EN EDUCACIÓN PRIMARIA",
-        "PROFESOR DE BIOLOGÍA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN BIOLOGÍA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN DESARROLLO INSTITUCIONAL",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN FÍSICA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MEMORIA, TERRITORIO Y CIUDADANÍA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN INGLÉS",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN LENGUA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MATEMÁTICA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL",
+        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA",
+        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL",
+        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA",
+        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA",
     ],
     "PNFA_E": [
-        "ESPECIALIZACIÓN EN EDUCACIÓN MEDIA",
-        "ESPECIALIZACIÓN EN EDUCACIÓN DE JÓVENES Y ADULTOS",
-        "ESPECIALIZACIÓN EN DERECHOS DEL NIÑO, NIÑAS Y ADOLESCENTES",
-        "ESPECIALIZACIÓN EN SUPERVISIÓN EDUCATIVA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN INICIAL",
+        "ESPECIALIZACIÓN EN EDUCACIÓN PRIMARIA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN EN CIENCIAS NATURALES",
+        "ESPECIALIZACIÓN EN MATEMÁTICA",
+        "ESPECIALIZACIÓN EN LENGUA Y COMUNICACIÓN",
+        "ESPECIALIZACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
+        "ESPECIALIZACIÓN EN LENGUA EXTRANJERA: INGLÉS",
+        "ESPECIALIZACIÓN EN EDUCACIÓN FÍSICA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN EN AGROECOLOGÍA",
+        "ESPECIALIZACIÓN EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
+        "ESPECIALIZACIÓN EN DERECHO DE NIÑOS, NIÑAS Y ADOLESCENTES, CONVIVENCIA SOLIDARIA Y PAZ",
+        "ESPECIALIZACIÓN EN EDUCACIÓN Y TECNOLOGÍA DE LA INFORMACIÓN Y COMUNICACIÓN",
+        "ESPECIALIZACIÓN EN EDUCACIÓN Y TRABAJO",
+        "ESPECIALIZACIÓN EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN ESPECIAL",
+        "ESPECIALIZACIÓN EN LENGUA EXTRANJERA INGLÉS PARA PRIMARIA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+        "ESPECIALIZACIÓN EN EDUCACIÓN EN FRONTERAS",
+        "ESPECIALIZACIÓN EN EDUCACIÓN INDÍGENA",
+        "ESPECIALIZACIÓN EN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS",
+        "ESPECIALIZACIÓN EN PROMOCIÓN DE LA LECTURA Y LITERATURA INFANTIL",
+        "ESPECIALIZACIÓN EN EDUCACIÓN DE LA SEXUALIDAD",
     ],
     "PNFA_M": [
         "MAESTRÍA EN EDUCACIÓN INICIAL",
         "MAESTRÍA EN EDUCACIÓN PRIMARIA",
+        "MAESTRÍA EN CIENCIAS NATURALES PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN MATEMÁTICA PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN LENGUA Y COMUNICACIÓN PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN INGLÉS PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN EDUCACIÓN FÍSICA PARA EDUCACIÓN MEDIA",
         "MAESTRÍA EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA",
-        "MAGISTER EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
-        "MAESTRÍA EN EDUCACIÓN FÍSICA",
-        "MAESTRÍA EN MATEMÁTICAS",
-        "MAESTRÍA EN INGLÉS",
+        "MAESTRÍA EN EDUCACIÓN EN FRONTERAS",
+        "MAESTRÍA EN EDUCACIÓN INDÍGENA",
     ],
     "PNFA_D": [
-        "DOCTORADO EN EDUCACIÓN (Próximamente)",
+        "DOCTOR(A) EN EDUCACIÓN",
     ],
 }
 
-# ============================================================
-# NIVELES ACADÉMICOS, CALIFICACIONES Y CONFIGURACIÓN
-# ============================================================
+TIPOS_EXPEDIENTE = ["INGRESO", "PROSECUCION", "EGRESADO"]
 
-NIVELES_ACADEMICOS = ["BACHILLER", "TSU"]
-NIVELES_PNFA = {"PNFA_E": "ESPECIALISTA", "PNFA_M": "MAESTRO", "PNFA_D": "DOCTOR"}
-TIPOS_INGRESO = ["INGRESO", "REINGRESO"]
-CALIFICACIONES_ESPECIALES = ["AP", "AC", "RE"]
+ROLES = ["ADMIN_PRINCIPAL", "ADMIN_AUXILIAR", "ADMIN_REGIONAL"]
 
 # ============================================================
-# TITULARIDAD POR GÉNERO  (v2.1 NUEVO)
+# BASE DE DATOS - Funciones
 # ============================================================
 
-# Mapeo de titularidad según tipo de programa y sexo
-# Sexo en el formulario: "M" o "F"
-TITULARIDAD_POR_GENERO = {
-    "PNF": {"M": "Profesor", "F": "Profesora"},
-    "PNFA_E": {"M": "Especialista", "F": "Especialista"},  # No cambia por género
-    "PNFA_M": {"M": "Magíster", "F": "Magíster"},  # No cambia por género
-    "PNFA_D": {"M": "Doctor", "F": "Doctora"},
-}
+def get_db():
+    """Obtiene conexión a la base de datos con WAL mode para concurrencia"""
+    conn = sqlite3.connect(DB_FILE, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-64000")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    return conn
 
 
-def calcular_titularidad(tipo_programa, sexo):
-    """Calcula la titularidad según tipo de programa y sexo"""
-    mapa = TITULARIDAD_POR_GENERO.get(tipo_programa, {})
-    if mapa:
-        return mapa.get(sexo, mapa.get("M", ""))
-    # Si es PNF pero no está en el mapa específico, usar Profesor/a
-    if "PNF" in tipo_programa.upper():
-        return "Profesor" if sexo == "M" else "Profesora"
-    return ""
-
-
-# Datos fijos de la certificación
-SECRETARIO_NOMBRE = "LENIN ROBERTO ROMERO ROSA"
-SECRETARIO_CEDULA = "V-2.956.814"
-GACETA_NUM = "41.632"
-RESOLUCION_NUM = "0026/002"
-
-# ============================================================
-# ROLES
-# ============================================================
-
-ROLES = {"NIVEL_1": "Admin Principal", "NIVEL_2": "Secretaría General", "NIVEL_3": "Secretaría Situada"}
-ROLES_LIST = list(ROLES.values())
-
-
-
-# ============================================================
-# PENSUM (CURRÍCULO) POR PROGRAMA PNF
-# ============================================================
-
-PENSUM_PNF = {
-    "LICENCIADO EN EDUCACIÓN INICIAL": {
-        "Introductorio - Primer Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora I", "creditos": 9},
-            {"uc": "Educación Bolivariana y Sociedad", "creditos": 2},
-            {"uc": "Uso Social de la Lengua", "creditos": 2},
-            {"uc": "Desarrollo y Crecimiento del Niño y la Niña en el Contexto Venezolano", "creditos": 3},
-            {"uc": "Formación Socio Crítica I", "creditos": 3},
-            {"uc": "Gestión de Riesgos y Protección Civil", "creditos": 3},
-        ],
-        "Primer Trayecto - Segundo Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora II", "creditos": 8},
-            {"uc": "Pedagogía Transformadora", "creditos": 3},
-            {"uc": "Cimientos de la Educación Inicial", "creditos": 3},
-            {"uc": "Las TICs en la Educación Bolivariana", "creditos": 3},
-            {"uc": "La Actividad Física, el Juego y la Recreación en la Educación Inicial", "creditos": 2},
-            {"uc": "Formación Socio Crítica II", "creditos": 3},
-            {"uc": "Lenguas Indígenas Electiva I", "creditos": 3},
-        ],
-        "Segundo Trayecto - Tercer Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora III", "creditos": 9},
-            {"uc": "Matemática y Estadística Aplicada a lo Socio Educativo", "creditos": 3},
-            {"uc": "Educación y Territorialidad", "creditos": 3},
-            {"uc": "Currículo en el Sistema Educativo Venezolano", "creditos": 3},
-            {"uc": "Tradiciones y Costumbres del Pueblo Venezolano", "creditos": 2},
-            {"uc": "Formación Socio Crítica III", "creditos": 3},
-            {"uc": "Ambiente y Salud Integral", "creditos": 3},
-        ],
-        "Segundo Trayecto - Cuarto Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora IV", "creditos": 8},
-            {"uc": "Desarrollo Socio Afectivo y la Inteligencia", "creditos": 3},
-            {"uc": "Responsabilidad Social Familia Escuela y Comunidad", "creditos": 3},
-            {"uc": "Educación Sexual y Reproductiva", "creditos": 3},
-            {"uc": "Desempeño Profesional del Docente de Educación Inicial", "creditos": 2},
-            {"uc": "Formación Socio Crítica IV", "creditos": 3},
-            {"uc": "Alimentación Sana y Alternativa en Educación Inicial. Electiva II", "creditos": 2},
-        ],
-        "Tercer Trayecto - Quinto Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora V", "creditos": 9},
-            {"uc": "Planificación y Evaluación en Educación Inicial", "creditos": 3},
-            {"uc": "Derechos Humanos del Niño y la Niña en el Contexto Educativo Venezolano", "creditos": 3},
-            {"uc": "Prevención y Atención a la Salud Integral del Niño y la Niña", "creditos": 3},
-            {"uc": "Expresión Musical y Corporal", "creditos": 2},
-            {"uc": "Formación Socio Crítica V", "creditos": 3},
-            {"uc": "Saberes Ancestrales de los Pueblos Indígenas", "creditos": 2},
-        ],
-        "Tercer Trayecto - Sexto Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora VI", "creditos": 8},
-            {"uc": "Educación Maternal, la Gestación y el Parto Humanizado", "creditos": 3},
-            {"uc": "Desarrollo de la Lengua Oral y Lengua Escrita en Niños de Educación Inicial", "creditos": 3},
-            {"uc": "Necesidades Educativas Especiales y Atención a la Diversidad", "creditos": 3},
-            {"uc": "Expresión Teatral y Danzas Tradicionales de Venezuela", "creditos": 2},
-            {"uc": "Formación Socio Crítica VI", "creditos": 3},
-            {"uc": "Creatividad e Innovación en Educación Inicial. Electiva III", "creditos": 2},
-        ],
-        "Cuarto Trayecto - Séptimo Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora VII", "creditos": 9},
-            {"uc": "Desarrollo de los Procesos Lógico Matemáticos en el Niño de Educación Inicial", "creditos": 3},
-            {"uc": "Expresión Plástica del Niño en Educación Inicial", "creditos": 3},
-            {"uc": "Promoción de la Lectura para Niños y Niñas de Educación Inicial", "creditos": 2},
-            {"uc": "Formación Socio Crítica VII", "creditos": 3},
-            {"uc": "Transformación de Materiales y Recursos para la Educación Inicial", "creditos": 3},
-        ],
-        "Cuarto Trayecto - Octavo Semestre": [
-            {"uc": "Proyecto Socio Integrador, Práctica Profesional Transformadora VIII", "creditos": 8},
-            {"uc": "Procesos Administrativos en la Educación Inicial en Venezuela", "creditos": 3},
-            {"uc": "Medios de Comunicación en Educación Inicial", "creditos": 2},
-            {"uc": "Formación Socio Crítica VIII", "creditos": 3},
-            {"uc": "Continuidad Afectiva y Articulación Pedagógica en Educación Inicial. Electiva IV", "creditos": 3},
-        ],
-    },
-    "LICENCIADO EN EDUCACIÓN PRIMARIA": {
-        "Introductorio - Primer Trimestre": [
-            {"uc": "El Docente y su Contexto Educativo. (Autobiografía y Caracterización del Entorno)", "creditos": 7},
-            {"uc": "Ciencias de la Educación", "creditos": 2},
-            {"uc": "Desarrollo Humano Integral", "creditos": 2},
-            {"uc": "Uso Social de la Lengua (Hablar, Escuchar, Leer y Escribir) del Docente", "creditos": 3},
-        ],
-        "Primer Trayecto - Segundo Trimestre": [
-            {"uc": "Técnicas e Instrumentos de Recolección de Datos e Información", "creditos": 7},
-            {"uc": "Pensamiento Pedagógico Liberador Nuestroamericano", "creditos": 2},
-            {"uc": "Identidad, Arraigo, Soberanía e Independencia", "creditos": 2},
-            {"uc": "Legislación Educativa y las Leyes del Poder Popular", "creditos": 3},
-        ],
-        "Primer Trayecto - Tercer Trimestre": [
-            {"uc": "Proyecto I: Diagnóstico Participativo Comunitario. (Del Registro a la Sistematización de Experiencias)", "creditos": 7},
-            {"uc": "Pensamiento Pedagógico de Simón Rodríguez", "creditos": 2},
-            {"uc": "Geo-Histórico", "creditos": 2},
-            {"uc": "Fundamentos Políticos, Filosóficos y Pedagógicos de la Educación Bolivariana", "creditos": 3},
-        ],
-        "Segundo Trayecto - Cuarto Trimestre": [
-            {"uc": "Enfoques y Paradigmas de la Investigación Educativa", "creditos": 7},
-            {"uc": "Pedagogía Crítica", "creditos": 2},
-            {"uc": "Matemática para la Comprensión del Mundo y la Vida", "creditos": 2},
-            {"uc": "Historia de la Educación Primaria en Venezuela", "creditos": 3},
-        ],
-        "Segundo Trayecto - Quinto Trimestre": [
-            {"uc": "Bases Teórico-Metodológicas de la Sistematización y los Relatos Pedagógicos", "creditos": 7},
-            {"uc": "Formación del Nuevo Republicano", "creditos": 2},
-            {"uc": "Didáctica Crítica e Integradora", "creditos": 3},
-            {"uc": "Nueva Subjetividad y Función Social del Docente Bolivariano", "creditos": 4},
-        ],
-        "Segundo Trayecto - Sexto Trimestre": [
-            {"uc": "Proyecto II: Registro y Sistematización de Experiencias como Metódica de Reflexión y Transformación", "creditos": 7},
-            {"uc": "Nuevas Lógicas de Organización y Valoración de los Procesos Educativos", "creditos": 2},
-            {"uc": "Planificación y Evaluación de los Aprendizajes", "creditos": 3},
-            {"uc": "Recursos para el Aprendizaje y la Enseñanza", "creditos": 4},
-        ],
-        "Tercer Trayecto - Séptimo Trimestre": [
-            {"uc": "Bases Teórico-Metodológicas de la IAPT Aplicadas a la Educación", "creditos": 7},
-            {"uc": "Docencia y Práctica Reflexiva, Innovadora y Creativa", "creditos": 2},
-            {"uc": "La Educación Popular como Alternativa para el Trabajo Sociocomunitario en la Construcción del Aprendizaje", "creditos": 4},
-            {"uc": "Integración Social e Inclusión en la Escuela Primaria", "creditos": 3},
-        ],
-        "Tercer Trayecto - Octavo Trimestre": [
-            {"uc": "IAPT en la Praxis Pedagógica", "creditos": 7},
-            {"uc": "Relaciones de Poder", "creditos": 2},
-            {"uc": "Perspectivas en la Enseñanza y Aprendizaje de la Lectura y la Escritura", "creditos": 4},
-            {"uc": "Educación, Trabajo Social Liberador y Espacios Productivos en la Escuela Primaria", "creditos": 3},
-        ],
-        "Cuarto Trayecto - Noveno Trimestre": [
-            {"uc": "Proyecto III: Socialización de la Práctica Pedagógica a Través de la Investigación, Acción Participativa y Transformadora", "creditos": 7},
-            {"uc": "Cultura de Convivencia y Paz", "creditos": 2},
-            {"uc": "El Arte Como Modo de Vivir, Sentir y Mirar lo Estético", "creditos": 4},
-            {"uc": "Educación Intercultural", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Trimestre": [
-            {"uc": "Ecología de los Saberes", "creditos": 7},
-            {"uc": "Educación, Territorialización y Comunalización", "creditos": 2},
-            {"uc": "Lenguaje Aplicado en las Ciencias y la Tecnología", "creditos": 4},
-            {"uc": "Retos y Desafíos de la Educación Ambiental: Formación Ecosocialista", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Primer Trimestre": [
-            {"uc": "Comunalización de los Espacios de Formación e Investigación", "creditos": 7},
-            {"uc": "Democratización del Saber Científico", "creditos": 2},
-            {"uc": "Educación Integral de la Sexualidad en la Educación Primaria", "creditos": 4},
-            {"uc": "Orientación Escolar y Familiar", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Segundo Trimestre": [
-            {"uc": "Proyecto IV: Experiencia de Transformación Comunitaria", "creditos": 7},
-            {"uc": "Contexto Jurídico-Político de la Comunalización de la Educación en Venezuela", "creditos": 2},
-            {"uc": "Educación Física, Deporte y Recreación", "creditos": 4},
-            {"uc": "El Cuerpo, la Emocionalidad, la Afectividad y la Lúdica en los Procesos de Enseñanza y Aprendizaje", "creditos": 4},
-        ],
-    },
-    "PROFESOR DE BIOLOGÍA": {
-        "Introductorio - Primer Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora I", "creditos": 7},
-            {"uc": "Teoría Social del Aprendizaje", "creditos": 2},
-            {"uc": "Pedagogía y Didáctica Crítica en el área de Ciencias Naturales", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología I", "creditos": 2},
-            {"uc": "Biomatemática", "creditos": 2},
-            {"uc": "Laboratorio: Integración de las Ciencias Naturales I", "creditos": 3},
-        ],
-        "Primer Trayecto - Segundo Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora II", "creditos": 7},
-            {"uc": "Planificación Educativa por Proyectos", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología II", "creditos": 2},
-            {"uc": "Química", "creditos": 2},
-            {"uc": "Laboratorio: Integración de las Ciencias Naturales II", "creditos": 3},
-        ],
-        "Primer Trayecto - Tercer Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora III", "creditos": 7},
-            {"uc": "Evaluación y Valoración de los Aprendizajes", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología III", "creditos": 2},
-            {"uc": "Física", "creditos": 2},
-            {"uc": "Laboratorio: Integración de las Ciencias Naturales III", "creditos": 3},
-        ],
-        "Segundo Trayecto - Cuarto Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora IV", "creditos": 7},
-            {"uc": "Uso Crítico de las TIC en el Ámbito Educativo", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología IV", "creditos": 2},
-            {"uc": "Biología Social y Biodiversidad", "creditos": 2},
-            {"uc": "Laboratorio Teórico-Práctico I", "creditos": 3},
-        ],
-        "Segundo Trayecto - Quinto Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora V", "creditos": 7},
-            {"uc": "Necesidades Educativas e Integración", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología V", "creditos": 2},
-            {"uc": "Cultura Ecológica Social", "creditos": 2},
-            {"uc": "Laboratorio Teórico-Práctico II", "creditos": 3},
-        ],
-        "Segundo Trayecto - Sexto Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora VI", "creditos": 7},
-            {"uc": "Educación para la Paz y la Vida", "creditos": 2},
-            {"uc": "Elementos Teórico Prácticos de la Biología y sus Aplicaciones", "creditos": 2},
-            {"uc": "Laboratorio Teórico-Práctico III", "creditos": 3},
-        ],
-        "Tercer Trayecto - Séptimo Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora VII", "creditos": 7},
-            {"uc": "Seminario: Pensamiento Pedagógico Liberador Nuestroamericano", "creditos": 2},
-            {"uc": "Ciencias Naturales para la Transformación Social I", "creditos": 3},
-            {"uc": "Laboratorio Integración de los Procesos Didácticos de la Biología I", "creditos": 3},
-        ],
-        "Tercer Trayecto - Octavo Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora VIII", "creditos": 7},
-            {"uc": "Desarrollo de la Ciudadanía Crítica", "creditos": 2},
-            {"uc": "Ciencias Naturales para la Transformación Social II", "creditos": 3},
-            {"uc": "Laboratorio Integración de los Procesos Didácticos de la Biología II", "creditos": 3},
-        ],
-        "Cuarto Trayecto - Noveno Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora IX", "creditos": 7},
-            {"uc": "Procesos Histórico Políticos de la Educación Nuestroamericana", "creditos": 2},
-            {"uc": "Ciencias Naturales para la Transformación Social III", "creditos": 3},
-            {"uc": "Laboratorio Integración de los Procesos Didácticos de la Biología III", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora X", "creditos": 7},
-            {"uc": "Taller: Metodología IAPT", "creditos": 2},
-            {"uc": "Taller: Procesos Interdisciplinarios en Biología", "creditos": 4},
-            {"uc": "Laboratorio: Procesos de Investigación, Creación e Innovación de las Ciencias Naturales I", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Primer Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora XI", "creditos": 7},
-            {"uc": "Taller: Sistematización IAPT", "creditos": 2},
-            {"uc": "Ciencias Naturales para la Transformación Social IV", "creditos": 2},
-            {"uc": "Laboratorio: Procesos de Investigación, Creación e Innovación de las Ciencias Naturales II", "creditos": 4},
-        ],
-        "Cuarto Trayecto - Décimo Segundo Trimestre": [
-            {"uc": "Proyecto Práctica Docente Transformadora XII", "creditos": 7},
-            {"uc": "Taller: Planificación y Evaluación IAPT", "creditos": 2},
-            {"uc": "Laboratorio: Fundamentos de Biología Molecular y Celular en Actividades Socioproductivas", "creditos": 2},
-            {"uc": "Laboratorio: Procesos de Investigación, Creación e Innovación de las Ciencias Naturales III", "creditos": 4},
-        ],
-    },
-}
-
-
-
-# ============================================================
-# BASE DE DATOS
-# ============================================================
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
+def init_database():
+    """Crea todas las tablas si no existen"""
+    conn = get_db()
     c = conn.cursor()
 
-    # --- Migración: verificar que las tablas tengan las columnas correctas ---
-    # Si existe una tabla 'usuarios' sin columna 'cedula', eliminarla para recrearla
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='usuarios'")
-    if c.fetchone():
-        c.execute("PRAGMA table_info(usuarios)")
-        columnas = [row[1] for row in c.fetchall()]
-        if 'cedula' not in columnas:
-            c.execute("DROP TABLE usuarios")
-            conn.commit()
-
-    # --- Usuarios ---
+    # Tabla de usuarios
     c.execute("""CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT NOT NULL,
-        cedula TEXT NOT NULL UNIQUE,
-        clave TEXT NOT NULL,
+        usuario TEXT UNIQUE NOT NULL,
+        clave_hash TEXT NOT NULL,
         rol TEXT NOT NULL,
-        estado TEXT NOT NULL,
-        fecha_creacion TEXT NOT NULL
-    )""")
-
-    # Migración: verificar tabla 'estudiantes' tenga columna 'cedula'
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='estudiantes'")
-    if c.fetchone():
-        c.execute("PRAGMA table_info(estudiantes)")
-        columnas = [row[1] for row in c.fetchall()]
-        if 'cedula' not in columnas:
-            c.execute("DROP TABLE estudiantes")
-            conn.commit()
-
-    # --- Almacén (sedes) ---
-    c.execute("""CREATE TABLE IF NOT EXISTS almacenes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
         nombre TEXT NOT NULL,
-        estado TEXT NOT NULL,
-        municipio TEXT NOT NULL,
-        aula_taller TEXT NOT NULL,
-        fecha_creacion TEXT NOT NULL
+        correo TEXT NOT NULL,
+        estado TEXT DEFAULT 'ACTIVO',
+        fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
 
-    # --- Estudiantes ---
-    c.execute("""CREATE TABLE IF NOT EXISTS estudiantes (
+    # Tabla de expedientes (NOMBRES y APELLIDOS separados)
+    c.execute("""CREATE TABLE IF NOT EXISTS expedientes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cedula TEXT NOT NULL,
-        apellidos TEXT NOT NULL,
-        nombres TEXT NOT NULL,
-        sexo TEXT NOT NULL,
-        fecha_nacimiento TEXT,
-        lugar_nacimiento TEXT,
         estado TEXT NOT NULL,
         municipio TEXT NOT NULL,
-        aula_taller TEXT NOT NULL,
+        aula_taller TEXT,
+        nombres TEXT NOT NULL,
+        apellidos TEXT DEFAULT '',
+        cedula TEXT UNIQUE NOT NULL,
+        correo_titular TEXT,
         tipo_programa TEXT NOT NULL,
         programa TEXT NOT NULL,
-        nivel_academico TEXT NOT NULL,
-        tipo_ingreso TEXT NOT NULL,
-        fecha_registro TEXT NOT NULL,
+        tipo_expediente TEXT NOT NULL,
+        periodo_culminacion TEXT DEFAULT '',
+        pdf_path TEXT,
+        observaciones TEXT,
         registrado_por TEXT,
-        titularidad TEXT,
-        procedencia_especializacion TEXT,
-        cedula_especializacion TEXT,
-        cedula_maestria TEXT,
-        pdf_path TEXT
+        fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP,
+        fecha_modificacion TEXT
     )""")
 
-    # --- Notas ---
+    # Migración: agregar columna 'apellidos' si la BD es anterior a esta versión
+    try:
+        c.execute("ALTER TABLE expedientes ADD COLUMN apellidos TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # La columna ya existe
+
+    # Migración: agregar columna 'periodo_culminacion' (para la certificación)
+    try:
+        c.execute("ALTER TABLE expedientes ADD COLUMN periodo_culminacion TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # La columna ya existe
+
+    # Migración: agregar columna 'sexo' (para redactar el título según el género)
+    try:
+        c.execute("ALTER TABLE expedientes ADD COLUMN sexo TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # La columna ya existe
+
+    # Tabla de MALLAS CURRICULARES: las materias (asignaturas) de cada programa,
+    # en el orden de trayecto/semestre/trimestre, con sus unidades de crédito (U.C.).
+    # 'es_introductorio'=1 marca las materias del trayecto/curso introductorio, que
+    # SÍ se cargan pero NO salen en la Certificación de Calificaciones.
+    c.execute("""CREATE TABLE IF NOT EXISTS mallas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        programa TEXT NOT NULL,
+        orden INTEGER NOT NULL DEFAULT 0,
+        periodo TEXT DEFAULT '',
+        materia TEXT NOT NULL,
+        creditos REAL DEFAULT 0,
+        es_introductorio INTEGER DEFAULT 0,
+        UNIQUE(programa, materia)
+    )""")
+
+    # Tabla de NOTAS (calificaciones) de cada estudiante por materia.
     c.execute("""CREATE TABLE IF NOT EXISTS notas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        estudiante_id INTEGER NOT NULL,
-        uc TEXT NOT NULL,
-        calificacion TEXT NOT NULL,
-        calificacion_letras TEXT,
-        credito INTEGER NOT NULL,
-        semestre TEXT NOT NULL,
-        fecha_registro TEXT NOT NULL,
-        registrado_por TEXT,
-        FOREIGN KEY (estudiante_id) REFERENCES estudiantes(id)
-    )""")
-
-    # --- Certificaciones emitidas ---
-    c.execute("""CREATE TABLE IF NOT EXISTS certificaciones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        estudiante_id INTEGER NOT NULL,
-        tipo_certificacion TEXT NOT NULL,
-        nivel_academico TEXT NOT NULL,
-        fecha_emision TEXT NOT NULL,
-        emitida_por TEXT,
-        hash_verificacion TEXT,
-        FOREIGN KEY (estudiante_id) REFERENCES estudiantes(id)
-    )""")
-
-    # --- Configuración de listas (programas dinámicos) ---
-    c.execute("""CREATE TABLE IF NOT EXISTS config_listas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tipo_programa TEXT NOT NULL,
+        cedula TEXT NOT NULL,
         programa TEXT NOT NULL,
-        fecha_creacion TEXT NOT NULL
+        materia TEXT NOT NULL,
+        creditos REAL DEFAULT 0,
+        nota TEXT DEFAULT '',
+        UNIQUE(cedula, materia)
     )""")
 
-    # --- Apertura/Cierre de notas ---
-    c.execute("""CREATE TABLE IF NOT EXISTS aperturas_notas (
+    # Tabla de solicitudes de modificación (incluye solicitudes de eliminación)
+    c.execute("""CREATE TABLE IF NOT EXISTS solicitudes_modificacion (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nivel_apertura TEXT NOT NULL DEFAULT 'plantel',
-        estado TEXT NOT NULL,
-        municipio TEXT NOT NULL,
-        aula_taller TEXT NOT NULL,
-        tipo_programa TEXT,
-        programa TEXT NOT NULL,
-        semestre TEXT NOT NULL,
-        abierto INTEGER DEFAULT 1,
-        fecha_apertura TEXT,
-        fecha_cierre TEXT,
-        abierto_por TEXT
-    )""")
-
-    # --- Solicitudes de autorización (eliminar registro, etc.) ---
-    c.execute("""CREATE TABLE IF NOT EXISTS solicitudes_autorizacion (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tipo_solicitud TEXT NOT NULL,
+        expediente_id INTEGER NOT NULL,
         solicitado_por TEXT NOT NULL,
-        cedula_solicitante TEXT NOT NULL,
-        rol_solicitante TEXT NOT NULL,
-        estudiante_id INTEGER,
-        estudiante_cedula TEXT,
+        campo_modificar TEXT NOT NULL,
+        valor_actual TEXT,
+        valor_nuevo TEXT,
         motivo TEXT,
-        estado TEXT NOT NULL DEFAULT 'Pendiente',
-        aprobado_por TEXT,
-        fecha_solicitud TEXT NOT NULL,
-        fecha_respuesta TEXT
+        estado_solicitud TEXT DEFAULT 'PENDIENTE',
+        revisado_por TEXT,
+        fecha_solicitud TEXT DEFAULT CURRENT_TIMESTAMP,
+        fecha_revision TEXT,
+        FOREIGN KEY (expediente_id) REFERENCES expedientes(id)
     )""")
 
-    # --- Registro de eliminaciones ---
-    c.execute("""CREATE TABLE IF NOT EXISTS eliminaciones (
+    # Tabla de listas editables (aulas_taller, programas futuros)
+    c.execute("""CREATE TABLE IF NOT EXISTS listas_editables (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        estudiante_id INTEGER,
-        estudiante_cedula TEXT,
-        estudiante_nombre TEXT,
-        eliminado_por TEXT,
-        rol_eliminador TEXT,
-        motivo TEXT,
-        tipo_eliminacion TEXT NOT NULL DEFAULT 'directa',
-        solicitud_id INTEGER,
-        fecha_eliminacion TEXT NOT NULL
+        tipo_lista TEXT NOT NULL,
+        categoria_padre TEXT NOT NULL,
+        valor TEXT NOT NULL,
+        UNIQUE(tipo_lista, categoria_padre, valor)
     )""")
 
-    # --- Admin por defecto ---
-    clave_admin = hashlib.sha256("admin123".encode()).hexdigest()
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("SELECT COUNT(*) FROM usuarios WHERE cedula = 'admin'")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO usuarios (nombre, cedula, clave, rol, estado, fecha_creacion) VALUES (?, ?, ?, ?, ?, ?)",
-                  ("Administrador", "admin", clave_admin, "Admin Principal", "Activo", ahora))
+    # Tabla de plantillas de correo
+    c.execute("""CREATE TABLE IF NOT EXISTS plantillas_correo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre_plantilla TEXT UNIQUE NOT NULL,
+        asunto TEXT NOT NULL,
+        cuerpo TEXT NOT NULL,
+        fecha_modificacion TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
 
-    # --- Secretario por defecto ---
-    clave_sec = hashlib.sha256("lenin123".encode()).hexdigest()
-    c.execute("SELECT COUNT(*) FROM usuarios WHERE cedula = 'V-2.956.814'")
+    # Crear admin principal por defecto
+    admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
+    c.execute("SELECT COUNT(*) FROM usuarios WHERE rol='ADMIN_PRINCIPAL'")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO usuarios (nombre, cedula, clave, rol, estado, fecha_creacion) VALUES (?, ?, ?, ?, ?, ?)",
-                  (SECRETARIO_NOMBRE, "V-2.956.814", clave_sec, "Secretaría General", "Activo", ahora))
+        c.execute("INSERT INTO usuarios (usuario, clave_hash, rol, nombre, correo) VALUES (?, ?, ?, ?, ?)",
+                  ("admin", admin_hash, "ADMIN_PRINCIPAL", "Administrador Principal", "admin@ulgu.edu.ve"))
+
+    # Cargar aulas taller por defecto si no existen
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='aula_taller'")
+    if c.fetchone()[0] == 0:
+        for estado, municipios in ESTADOS_MUNICIPIOS.items():
+            for municipio in municipios:
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("aula_taller", municipio, f"Aula {municipio} 01"))
+
+    # Cargar programas por defecto si no existen
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='programa'")
+    if c.fetchone()[0] == 0:
+        for tipo, programas in TIPOS_PROGRAMA_PROGRAMAS.items():
+            for prog in programas:
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("programa", tipo, prog))
+
+    # Migracion: refrescar la lista de programas a la version oficial de las mallas.
+    # Se ejecuta UNA sola vez (marcada con un sello de version) para no borrar
+    # programas que el administrador agregue manualmente mas adelante.
+    VERSION_PROGRAMAS = "mallas_2026_v1"
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='meta' AND categoria_padre='version_programas' AND valor=?",
+              (VERSION_PROGRAMAS,))
+    if c.fetchone()[0] == 0:
+        # Borrar los programas antiguos y recargar los oficiales desde las mallas
+        c.execute("DELETE FROM listas_editables WHERE tipo_lista='programa'")
+        for tipo, programas in TIPOS_PROGRAMA_PROGRAMAS.items():
+            for prog in programas:
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("programa", tipo, prog))
+        # Dejar el sello para no volver a borrar en el futuro
+        c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                  ("meta", "version_programas", VERSION_PROGRAMAS))
+
+    # Plantilla de correo por defecto
+    c.execute("SELECT COUNT(*) FROM plantillas_correo")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO plantillas_correo (nombre_plantilla, asunto, cuerpo) VALUES (?, ?, ?)",
+                  ("registro_expediente",
+                   "Registro de Expediente - UNEM",
+                   "Estimado(a) {nombres} {apellidos},\n\n"
+                   "Le informamos que su expediente ha sido registrado exitosamente en el sistema de la UNEM.\n\n"
+                   "Detalles del registro:\n"
+                   "- Cédula: {cedula}\n"
+                   "- Estado: {estado}\n"
+                   "- Municipio: {municipio}\n"
+                   "- Programa: {programa}\n"
+                   "- Tipo de Expediente: {tipo_expediente}\n\n"
+                   "Se adjunta el PDF de su expediente digital.\n\n"
+                   "Atentamente,\n"
+                   "Expedientes UNEM"))
 
     conn.commit()
     conn.close()
 
+# ============================================================
+# FUNCIONES DE AUTENTICACIÓN
+# ============================================================
 
-def hash_clave(clave):
-    return hashlib.sha256(clave.encode()).hexdigest()
-
-
-def verificar_login(cedula, clave):
-    conn = sqlite3.connect(DB_FILE)
+def verificar_credenciales(usuario, clave):
+    """Verifica usuario y contraseña"""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, nombre, cedula, rol, estado FROM usuarios WHERE cedula = ? AND clave = ?",
-              (cedula, hash_clave(clave)))
-    row = c.fetchone()
+    clave_hash = hashlib.sha256(clave.encode()).hexdigest()
+    c.execute("SELECT usuario, rol, nombre, correo FROM usuarios WHERE usuario=? AND clave_hash=? AND estado='ACTIVO'",
+              (usuario, clave_hash))
+    resultado = c.fetchone()
     conn.close()
-    return row
+    return resultado
 
 
-def cambiar_clave_usuario(cedula, clave_actual, clave_nueva):
-    """Cambia la contraseña de un usuario. Retorna (True, msg) o (False, msg)"""
-    if len(clave_nueva) < 8:
-        return False, "La nueva contraseña debe tener al menos 8 caracteres."
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id FROM usuarios WHERE cedula = ? AND clave = ?",
-              (cedula, hash_clave(clave_actual)))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return False, "Contraseña actual incorrecta."
-    c.execute("UPDATE usuarios SET clave = ? WHERE cedula = ?",
-              (hash_clave(clave_nueva), cedula))
-    conn.commit()
-    conn.close()
-    return True, "Contraseña actualizada exitosamente."
-
-
-def crear_usuario(nombre, cedula, clave, rol, estado):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+def crear_usuario(usuario, clave, rol, nombre, correo):
+    """Crea un nuevo usuario"""
     try:
-        c.execute("INSERT INTO usuarios (nombre, cedula, clave, rol, estado, fecha_creacion) VALUES (?, ?, ?, ?, ?, ?)",
-                  (nombre, cedula, hash_clave(clave), rol, estado, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn = get_db()
+        c = conn.cursor()
+        clave_hash = hashlib.sha256(clave.encode()).hexdigest()
+        c.execute("INSERT INTO usuarios (usuario, clave_hash, rol, nombre, correo) VALUES (?, ?, ?, ?, ?)",
+                  (usuario, clave_hash, rol, nombre, correo))
         conn.commit()
         conn.close()
         return True
     except sqlite3.IntegrityError:
-        conn.close()
         return False
 
 
 def obtener_usuarios():
-    conn = sqlite3.connect(DB_FILE)
+    """Obtiene todos los usuarios"""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, nombre, cedula, rol, estado, fecha_creacion FROM usuarios ORDER BY id")
-    rows = c.fetchall()
+    c.execute("SELECT usuario, rol, nombre, correo, estado, fecha_creacion FROM usuarios ORDER BY fecha_creacion DESC")
+    datos = c.fetchall()
     conn.close()
-    return rows
+    return datos
 
 
-def actualizar_estado_usuario(user_id, nuevo_estado):
-    conn = sqlite3.connect(DB_FILE)
+def cambiar_estado_usuario(usuario, nuevo_estado):
+    """Activa o desactiva un usuario"""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("UPDATE usuarios SET estado = ? WHERE id = ?", (nuevo_estado, user_id))
+    c.execute("UPDATE usuarios SET estado=? WHERE usuario=?", (nuevo_estado, usuario))
     conn.commit()
     conn.close()
 
 
-def obtener_almacenes():
-    conn = sqlite3.connect(DB_FILE)
+def cambiar_clave_usuario(usuario, nueva_clave):
+    """Cambia la contraseña de un usuario"""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, nombre, estado, municipio, aula_taller FROM almacenes ORDER BY estado, municipio")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def crear_almacen(nombre, estado, municipio, aula_taller):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO almacenes (nombre, estado, municipio, aula_taller, fecha_creacion) VALUES (?, ?, ?, ?, ?)",
-                  (nombre, estado, municipio, aula_taller, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
-
-
-def eliminar_almacen(almacen_id):
-    """Elimina un almacén/aula taller por su ID"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("DELETE FROM almacenes WHERE id = ?", (almacen_id,))
-        conn.commit()
-        eliminado = c.rowcount > 0
-        conn.close()
-        return eliminado
-    except Exception:
-        conn.close()
-        return False
-
-
-def obtener_almacenes_filtro(estado="", municipio="", busqueda=""):
-    """Obtiene almacenes filtrados por estado, municipio y/o nombre de aula"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    query = "SELECT id, nombre, estado, municipio, aula_taller FROM almacenes WHERE 1=1"
-    params = []
-    if estado:
-        query += " AND estado = ?"
-        params.append(estado)
-    if municipio:
-        query += " AND municipio = ?"
-        params.append(municipio)
-    if busqueda:
-        query += " AND (nombre LIKE ? OR aula_taller LIKE ?)"
-        params.append(f"%{busqueda}%")
-        params.append(f"%{busqueda}%")
-    query += " ORDER BY estado, municipio, nombre"
-    c.execute(query, params)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def obtener_programas(tipo_programa):
-    """Obtiene la lista de programas para un tipo, incluyendo los dinámicos de config_listas"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Programas por defecto
-    por_defecto = PROGRAMAS_POR_DEFECTO.get(tipo_programa, [])
-    # Programas dinámicos
-    c.execute("SELECT programa FROM config_listas WHERE tipo_programa = ? ORDER BY programa", (tipo_programa,))
-    dinamicos = [row[0] for row in c.fetchall()]
-    conn.close()
-    # Combinar sin duplicados
-    todos = list(por_defecto)
-    for p in dinamicos:
-        if p not in todos:
-            todos.append(p)
-    return todos
-
-
-def agregar_programa_lista(tipo_programa, programa):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO config_listas (tipo_programa, programa, fecha_creacion) VALUES (?, ?, ?)",
-                  (tipo_programa, programa, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        conn.close()
-        return False
-
-
-def eliminar_programa_lista(programa_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM config_listas WHERE id = ?", (programa_id,))
+    clave_hash = hashlib.sha256(nueva_clave.encode()).hexdigest()
+    c.execute("UPDATE usuarios SET clave_hash=? WHERE usuario=?", (clave_hash, usuario))
     conn.commit()
     conn.close()
 
 
-def obtener_todos_programas_config():
-    conn = sqlite3.connect(DB_FILE)
+# ============================================================
+# FUNCIONES DE EXPEDIENTES
+# ============================================================
+
+def registrar_expediente(datos, pdf_file=None):
+    """Registra un nuevo expediente en la base de datos"""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, tipo_programa, programa FROM config_listas ORDER BY tipo_programa, programa")
-    rows = c.fetchall()
-    conn.close()
-    return rows
 
-
-# --- Funciones de Estudiantes ---
-
-def registrar_estudiante(datos):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("""INSERT INTO estudiantes 
-            (cedula, apellidos, nombres, sexo, fecha_nacimiento, lugar_nacimiento, 
-             estado, municipio, aula_taller, tipo_programa, programa, nivel_academico, 
-             tipo_ingreso, fecha_registro, registrado_por, titularidad, 
-             procedencia_especializacion, cedula_especializacion, cedula_maestria, pdf_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (datos["cedula"], datos["apellidos"], datos["nombres"], datos["sexo"],
-                   datos.get("fecha_nacimiento", ""), datos.get("lugar_nacimiento", ""),
-                   datos["estado"], datos["municipio"], datos["aula_taller"],
-                   datos["tipo_programa"], datos["programa"], datos["nivel_academico"],
-                   datos["tipo_ingreso"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                   datos.get("registrado_por", ""), datos.get("titularidad", ""),
-                   datos.get("procedencia_especializacion", ""),
-                   datos.get("cedula_especializacion", ""),
-                   datos.get("cedula_maestria", ""), datos.get("pdf_path", "")))
-        conn.commit()
-        est_id = c.lastrowid
-        conn.close()
-        return True, est_id
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False, None
-
-
-def buscar_estudiante(cedula):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, cedula, apellidos, nombres, sexo, fecha_nacimiento, lugar_nacimiento,
-                       estado, municipio, aula_taller, tipo_programa, programa, nivel_academico,
-                       tipo_ingreso, fecha_registro, titularidad, procedencia_especializacion,
-                       cedula_especializacion, cedula_maestria
-                FROM estudiantes WHERE cedula = ?""", (cedula,))
-    row = c.fetchone()
-    conn.close()
-    return row
-
-
-def obtener_estudiantes_filtro(estado="", municipio="", aula_taller="", programa=""):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    query = """SELECT id, cedula, apellidos, nombres, sexo, estado, municipio, aula_taller,
-                      tipo_programa, programa, nivel_academico, tipo_ingreso, titularidad
-               FROM estudiantes WHERE 1=1"""
-    params = []
-    if estado:
-        query += " AND estado = ?"
-        params.append(estado)
-    if municipio:
-        query += " AND municipio = ?"
-        params.append(municipio)
-    if aula_taller:
-        query += " AND aula_taller = ?"
-        params.append(aula_taller)
-    if programa:
-        query += " AND programa = ?"
-        params.append(programa)
-    query += " ORDER BY apellidos, nombres"
-    c.execute(query, params)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-# --- Funciones de Notas ---
-
-def registrar_nota(estudiante_id, uc, calificacion, calificacion_letras, credito, semestre, registrado_por):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Verificar si la nota ya existe
-    c.execute("SELECT id FROM notas WHERE estudiante_id = ? AND uc = ? AND semestre = ?",
-              (estudiante_id, uc, semestre))
+    # Verificar cédula duplicada
+    c.execute("SELECT id FROM expedientes WHERE cedula=?", (datos["cedula"],))
     if c.fetchone():
-        # Actualizar nota existente
-        c.execute("""UPDATE notas SET calificacion = ?, calificacion_letras = ?, credito = ?, 
-                    fecha_registro = ?, registrado_por = ?
-                    WHERE estudiante_id = ? AND uc = ? AND semestre = ?""",
-                  (calificacion, calificacion_letras, credito,
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), registrado_por,
-                   estudiante_id, uc, semestre))
-    else:
-        c.execute("""INSERT INTO notas (estudiante_id, uc, calificacion, calificacion_letras, credito, semestre, fecha_registro, registrado_por)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (estudiante_id, uc, calificacion, calificacion_letras, credito, semestre,
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), registrado_por))
+        conn.close()
+        return False, "Ya existe un expediente con esa cédula"
+
+    # Guardar PDF
+    pdf_path = None
+    if pdf_file:
+        filename = f"{datos['cedula'].replace('-', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+        pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_file)
+
+    c.execute("""INSERT INTO expedientes 
+        (estado, municipio, aula_taller, nombres, apellidos, cedula, correo_titular,
+         tipo_programa, programa, tipo_expediente, periodo_culminacion, sexo, pdf_path, observaciones, registrado_por)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (datos["estado"], datos["municipio"], datos.get("aula_taller", ""),
+               datos["nombres"], datos.get("apellidos", ""), datos["cedula"], datos.get("correo_titular", ""),
+               datos["tipo_programa"], datos["programa"], datos["tipo_expediente"],
+               datos.get("periodo_culminacion", ""), datos.get("sexo", ""),
+               pdf_path, datos.get("observaciones", ""), datos.get("registrado_por", "")))
+
+    expediente_id = c.lastrowid
     conn.commit()
     conn.close()
+    return True, f"Expediente #{expediente_id} registrado exitosamente"
 
 
-def obtener_notas_estudiante(estudiante_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, uc, calificacion, calificacion_letras, credito, semestre, fecha_registro 
-                FROM notas WHERE estudiante_id = ? ORDER BY semestre""", (estudiante_id,))
-    rows = c.fetchall()
+def obtener_expedientes(filtros=None):
+    """Obtiene expedientes con filtros opcionales"""
+    conn = get_db()
+    query = "SELECT id, estado, municipio, aula_taller, nombres, apellidos, cedula, correo_titular, tipo_programa, programa, tipo_expediente, periodo_culminacion, sexo, pdf_path, observaciones, registrado_por, fecha_registro FROM expedientes WHERE 1=1"
+    params = []
+
+    if filtros:
+        if filtros.get("estado"):
+            query += " AND estado=?"
+            params.append(filtros["estado"])
+        if filtros.get("municipio"):
+            query += " AND municipio=?"
+            params.append(filtros["municipio"])
+        if filtros.get("tipo_programa"):
+            query += " AND tipo_programa=?"
+            params.append(filtros["tipo_programa"])
+        if filtros.get("programa"):
+            query += " AND programa=?"
+            params.append(filtros["programa"])
+        if filtros.get("tipo_expediente"):
+            query += " AND tipo_expediente=?"
+            params.append(filtros["tipo_expediente"])
+        if filtros.get("cedula"):
+            query += " AND cedula=?"
+            params.append(filtros["cedula"])
+
+    query += " ORDER BY fecha_registro DESC"
+    df = pd.read_sql_query(query, conn, params=params)
     conn.close()
-    return rows
+    return df
 
 
-# --- Funciones de Apertura/Cierre de Notas ---
+def obtener_expediente_por_id(exp_id):
+    """Obtiene un expediente específico por ID"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM expedientes WHERE id=?", (exp_id,))
+    datos = c.fetchone()
+    conn.close()
+    return datos
 
-def verificar_apertura(estado, municipio, aula_taller, programa, semestre):
-    """Verifica si el período está abierto. Chequea en orden: nacional → estadal → municipal → plantel."""
-    conn = sqlite3.connect(DB_FILE)
+
+def obtener_estadisticas():
+    """Obtiene estadísticas generales"""
+    conn = get_db()
     c = conn.cursor()
 
-    # 1) Apertura NACIONAL (estado='TODOS')
-    c.execute("""SELECT abierto FROM aperturas_notas
-                WHERE nivel_apertura = 'nacional' AND estado = 'TODOS'
-                AND programa = ? AND semestre = ?""",
-              (programa, semestre))
-    row = c.fetchone()
-    if row is not None:
-        conn.close()
-        return bool(row[0])
+    c.execute("SELECT COUNT(*) FROM expedientes")
+    total = c.fetchone()[0]
 
-    # 2) Apertura ESTADAL
-    c.execute("""SELECT abierto FROM aperturas_notas
-                WHERE nivel_apertura = 'estadal' AND estado = ?
-                AND municipio = 'TODOS'
-                AND programa = ? AND semestre = ?""",
-              (estado, programa, semestre))
-    row = c.fetchone()
-    if row is not None:
-        conn.close()
-        return bool(row[0])
+    c.execute("SELECT tipo_expediente, COUNT(*) FROM expedientes GROUP BY tipo_expediente")
+    por_tipo_exp = dict(c.fetchall())
 
-    # 3) Apertura MUNICIPAL
-    c.execute("""SELECT abierto FROM aperturas_notas
-                WHERE nivel_apertura = 'municipal' AND estado = ? AND municipio = ?
-                AND aula_taller = 'TODOS'
-                AND programa = ? AND semestre = ?""",
-              (estado, municipio, programa, semestre))
-    row = c.fetchone()
-    if row is not None:
-        conn.close()
-        return bool(row[0])
+    c.execute("SELECT estado, COUNT(*) FROM expedientes GROUP BY estado ORDER BY COUNT(*) DESC")
+    por_estado = dict(c.fetchall())
 
-    # 4) Apertura POR PLANTEL
-    c.execute("""SELECT abierto FROM aperturas_notas
-                WHERE nivel_apertura = 'plantel' AND estado = ? AND municipio = ?
-                AND aula_taller = ? AND programa = ? AND semestre = ?""",
-              (estado, municipio, aula_taller, programa, semestre))
-    row = c.fetchone()
-    if row is not None:
-        conn.close()
-        return bool(row[0])
+    c.execute("SELECT tipo_programa, COUNT(*) FROM expedientes GROUP BY tipo_programa ORDER BY COUNT(*) DESC")
+    por_tipo_prog = dict(c.fetchall())
+
+    c.execute("SELECT programa, COUNT(*) FROM expedientes GROUP BY programa ORDER BY COUNT(*) DESC")
+    por_programa = dict(c.fetchall())
+
+    c.execute("SELECT municipio, COUNT(*) FROM expedientes GROUP BY municipio ORDER BY COUNT(*) DESC LIMIT 20")
+    por_municipio = dict(c.fetchall())
 
     conn.close()
-    return True  # Si no hay registro de cierre, se asume abierto
-
-
-def establecer_apertura(nivel_apertura, estado, municipio, aula_taller, tipo_programa, programa, semestre, abierto, usuario):
-    """Establece apertura/cierre según nivel: nacional, estadal, municipal, plantel."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Para búsqueda, usamos los valores 'TODOS' según nivel
-    estado_val = estado if nivel_apertura in ("estadal", "municipal", "plantel") else "TODOS"
-    municipio_val = municipio if nivel_apertura in ("municipal", "plantel") else "TODOS"
-    aula_val = aula_taller if nivel_apertura == "plantel" else "TODOS"
-
-    c.execute("""SELECT id FROM aperturas_notas
-                WHERE nivel_apertura = ? AND estado = ? AND municipio = ? AND aula_taller = ?
-                AND tipo_programa = ? AND programa = ? AND semestre = ?""",
-              (nivel_apertura, estado_val, municipio_val, aula_val, tipo_programa, programa, semestre))
-    row = c.fetchone()
-    if row:
-        if abierto:
-            c.execute("""UPDATE aperturas_notas SET abierto = 1, fecha_apertura = ?, abierto_por = ?
-                        WHERE id = ?""", (ahora, usuario, row[0]))
-        else:
-            c.execute("""UPDATE aperturas_notas SET abierto = 0, fecha_cierre = ?
-                        WHERE id = ?""", (ahora, row[0]))
-    else:
-        c.execute("""INSERT INTO aperturas_notas (nivel_apertura, estado, municipio, aula_taller, tipo_programa, programa, semestre, abierto, fecha_apertura, abierto_por)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (nivel_apertura, estado_val, municipio_val, aula_val, tipo_programa, programa, semestre, 1 if abierto else 0, ahora, usuario))
-    conn.commit()
-    conn.close()
-
-
-# --- Funciones de Certificaciones ---
-
-def registrar_certificacion(estudiante_id, tipo, nivel, emitida_por, hash_ver):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""INSERT INTO certificaciones (estudiante_id, tipo_certificacion, nivel_academico, fecha_emision, emitida_por, hash_verificacion)
-                VALUES (?, ?, ?, ?, ?, ?)""",
-              (estudiante_id, tipo, nivel, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), emitida_por, hash_ver))
-    conn.commit()
-    conn.close()
-
-
-def obtener_certificaciones(estudiante_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, tipo_certificacion, nivel_academico, fecha_emision, emitida_por, hash_verificacion
-                FROM certificaciones WHERE estudiante_id = ? ORDER BY fecha_emision DESC""", (estudiante_id,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-# --- Funciones de Solicitudes de Autorización ---
-
-def crear_solicitud_autorizacion(tipo_solicitud, solicitado_por, cedula_solicitante, rol_solicitante,
-                                  estudiante_id=None, estudiante_cedula=None, motivo=""):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""INSERT INTO solicitudes_autorizacion
-                (tipo_solicitud, solicitado_por, cedula_solicitante, rol_solicitante,
-                 estudiante_id, estudiante_cedula, motivo, estado, fecha_solicitud)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'Pendiente', ?)""",
-              (tipo_solicitud, solicitado_por, cedula_solicitante, rol_solicitante,
-               estudiante_id, estudiante_cedula, motivo, ahora))
-    conn.commit()
-    solicitud_id = c.lastrowid
-    conn.close()
-    return solicitud_id
-
-
-def obtener_solicitudes_autorizacion(estado_filtro=None):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    if estado_filtro:
-        c.execute("""SELECT id, tipo_solicitud, solicitado_por, cedula_solicitante, rol_solicitante,
-                           estudiante_id, estudiante_cedula, motivo, estado, aprobado_por,
-                           fecha_solicitud, fecha_respuesta
-                    FROM solicitudes_autorizacion WHERE estado = ? ORDER BY fecha_solicitud DESC""",
-                  (estado_filtro,))
-    else:
-        c.execute("""SELECT id, tipo_solicitud, solicitado_por, cedula_solicitante, rol_solicitante,
-                           estudiante_id, estudiante_cedula, motivo, estado, aprobado_por,
-                           fecha_solicitud, fecha_respuesta
-                    FROM solicitudes_autorizacion ORDER BY fecha_solicitud DESC""")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def responder_solicitud_autorizacion(solicitud_id, aprobado, aprobado_por):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    nuevo_estado = "Aprobada" if aprobado else "Rechazada"
-    c.execute("""UPDATE solicitudes_autorizacion SET estado = ?, aprobado_por = ?, fecha_respuesta = ?
-                WHERE id = ?""",
-              (nuevo_estado, aprobado_por, ahora, solicitud_id))
-    conn.commit()
-    conn.close()
-    return nuevo_estado
-
-
-# --- Funciones de Eliminación de Registros ---
-
-def eliminar_estudiante(estudiante_id, eliminado_por, rol_eliminador, motivo, tipo_eliminacion="directa", solicitud_id=None):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Obtener datos del estudiante antes de eliminar
-    c.execute("SELECT cedula, apellidos, nombres FROM estudiantes WHERE id = ?", (estudiante_id,))
-    est = c.fetchone()
-    if not est:
-        conn.close()
-        return False, "Estudiante no encontrado"
-    est_cedula, est_apellidos, est_nombres = est
-    est_nombre = f"{est_apellidos} {est_nombres}"
-    # Registrar la eliminación
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""INSERT INTO eliminaciones
-                (estudiante_id, estudiante_cedula, estudiante_nombre, eliminado_por, rol_eliminador,
-                 motivo, tipo_eliminacion, solicitud_id, fecha_eliminacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (estudiante_id, est_cedula, est_nombre, eliminado_por, rol_eliminador,
-               motivo, tipo_eliminacion, solicitud_id, ahora))
-    # Eliminar notas del estudiante
-    c.execute("DELETE FROM notas WHERE estudiante_id = ?", (estudiante_id,))
-    # Eliminar certificaciones del estudiante
-    c.execute("DELETE FROM certificaciones WHERE estudiante_id = ?", (estudiante_id,))
-    # Eliminar estudiante
-    c.execute("DELETE FROM estudiantes WHERE id = ?", (estudiante_id,))
-    conn.commit()
-    conn.close()
-    return True, f"Estudiante {est_nombre} ({est_cedula}) eliminado correctamente"
-
-
-def obtener_eliminaciones():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, estudiante_cedula, estudiante_nombre, eliminado_por, rol_eliminador,
-                       motivo, tipo_eliminacion, solicitud_id, fecha_eliminacion
-                FROM eliminaciones ORDER BY fecha_eliminacion DESC""")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def obtener_aperturas_notas():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, nivel_apertura, estado, municipio, aula_taller, tipo_programa,
-                       programa, semestre, abierto, fecha_apertura, fecha_cierre, abierto_por
-                FROM aperturas_notas ORDER BY fecha_apertura DESC""")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-# --- Consulta read-only Etapa 1 ---
-
-def consultar_expediente_etapa1(cedula):
-    """Consulta read-only a la base de datos de Etapa 1 (expedientes.db)"""
-    if not os.path.exists(DB_FILE_ETAPA1):
-        return None, "Base de datos de Etapa 1 no encontrada."
-    try:
-        conn = sqlite3.connect(DB_FILE_ETAPA1)
-        c = conn.cursor()
-        # Intentar buscar en
-
-        # Intentar buscar en tabla 'expedientes' o 'estudiantes'
-        # Primero verificar qué tablas existen
-        c.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tablas = [row[0] for row in c.fetchall()]
-        
-        tabla_dest = None
-        if "expedientes" in tablas:
-            tabla_dest = "expedientes"
-        elif "estudiantes" in tablas:
-            tabla_dest = "estudiantes"
-        else:
-            conn.close()
-            return None, f"No se encontró tabla de expedientes en Etapa 1. Tablas: {tablas}"
-        
-        # Verificar columnas
-        c.execute(f"PRAGMA table_info({tabla_dest})")
-        columnas = [row[1] for row in c.fetchall()]
-        
-        # Construir SELECT con las columnas disponibles
-        campos_disponibles = []
-        for col in ["cedula", "apellidos", "nombres", "sexo", "fecha_nacimiento", 
-                     "estado", "municipio", "programa", "tipo_programa", "nivel_academico",
-                     "fecha_registro", "aula_taller", "tipo_ingreso"]:
-            if col in columnas:
-                campos_disponibles.append(col)
-        
-        if "cedula" not in campos_disponibles:
-            conn.close()
-            return None, "La tabla no tiene columna 'cedula'."
-        
-        select_sql = ", ".join(campos_disponibles)
-        c.execute(f"SELECT {select_sql} FROM {tabla_dest} WHERE cedula = ?", (cedula,))
-        row = c.fetchone()
-        conn.close()
-        
-        if row:
-            datos = dict(zip(campos_disponibles, row))
-            return datos, None
-        else:
-            return None, "No se encontró expediente en Etapa 1."
-    except Exception as e:
-        return None, f"Error al consultar Etapa 1: {str(e)}"
-
-
-
-# ============================================================
-# CONVERSIÓN NÚMERO A LETRAS
-# ============================================================
-
-def numero_a_letras(numero):
-    """Convierte un número entero (1-20) a su equivalente en letras"""
-    mapa = {
-        1: "UNO", 2: "DOS", 3: "TRES", 4: "CUATRO", 5: "CINCO",
-        6: "SEIS", 7: "SIETE", 8: "OCHO", 9: "NUEVE", 10: "DIEZ",
-        11: "ONCE", 12: "DOCE", 13: "TRECE", 14: "CATORCE", 15: "QUINCE",
-        16: "DIECISÉIS", 17: "DIECISIETE", 18: "DIECIOCHO", 19: "DIECINUEVE",
-        20: "VEINTE"
+    return {
+        "total": total,
+        "por_tipo_expediente": por_tipo_exp,
+        "por_estado": por_estado,
+        "por_tipo_programa": por_tipo_prog,
+        "por_programa": por_programa,
+        "por_municipio": por_municipio,
     }
-    try:
-        n = int(numero)
-        return mapa.get(n, str(n))
-    except (ValueError, TypeError):
-        return str(numero)
+
+# ============================================================
+# FUNCIONES DE SOLICITUDES DE MODIFICACIÓN / ELIMINACIÓN
+# ============================================================
+
+CAMPO_ELIMINAR = "ELIMINAR EXPEDIENTE"
 
 
-def calificacion_a_letras(cal):
-    """Convierte calificación (número 1-20 o especial AP/AC/RE) a letras"""
-    if cal in CALIFICACIONES_ESPECIALES:
-        mapa_especiales = {"AP": "APROBADO", "AC": "ACREDITADO", "RE": "REPROBADO"}
-        return mapa_especiales.get(cal, cal)
-    try:
-        n = int(cal)
-        if 1 <= n <= 20:
-            return f"({numero_a_letras(n)})"
-        return str(cal)
-    except (ValueError, TypeError):
-        return str(cal)
+def crear_solicitud_modificacion(expediente_id, solicitado_por, campo, valor_actual, valor_nuevo, motivo):
+    """Crea una solicitud de modificación pendiente"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""INSERT INTO solicitudes_modificacion 
+        (expediente_id, solicitado_por, campo_modificar, valor_actual, valor_nuevo, motivo)
+        VALUES (?, ?, ?, ?, ?, ?)""",
+              (expediente_id, solicitado_por, campo, valor_actual, valor_nuevo, motivo))
+    conn.commit()
+    conn.close()
+
+
+def crear_solicitud_eliminacion(expediente_id, solicitado_por, resumen, motivo):
+    """Crea una solicitud de ELIMINACIÓN de expediente (la ejecutan Nivel 1 y 2)"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""INSERT INTO solicitudes_modificacion 
+        (expediente_id, solicitado_por, campo_modificar, valor_actual, valor_nuevo, motivo)
+        VALUES (?, ?, ?, ?, ?, ?)""",
+              (expediente_id, solicitado_por, CAMPO_ELIMINAR, resumen, "ELIMINAR REGISTRO", motivo))
+    conn.commit()
+    conn.close()
+
+
+def obtener_solicitudes(estado_filtro=None):
+    """Obtiene solicitudes de modificación / eliminación"""
+    conn = get_db()
+    query = """SELECT s.id, s.expediente_id, s.solicitado_por, s.campo_modificar, 
+               s.valor_actual, s.valor_nuevo, s.motivo, s.estado_solicitud, 
+               s.revisado_por, s.fecha_solicitud, s.fecha_revision,
+               e.cedula, e.nombres, e.apellidos
+        FROM solicitudes_modificacion s
+        LEFT JOIN expedientes e ON s.expediente_id = e.id
+        WHERE 1=1"""
+    params = []
+    if estado_filtro:
+        query += " AND s.estado_solicitud=?"
+        params.append(estado_filtro)
+    query += " ORDER BY s.fecha_solicitud DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def aprobar_solicitud(solicitud_id, revisado_por):
+    """Aprueba una solicitud y aplica la modificación (o elimina el expediente)"""
+    conn = get_db()
+    c = conn.cursor()
+
+    # Obtener datos de la solicitud
+    c.execute("SELECT expediente_id, campo_modificar, valor_nuevo FROM solicitudes_modificacion WHERE id=? AND estado_solicitud='PENDIENTE'",
+              (solicitud_id,))
+    solicitud = c.fetchone()
+    if not solicitud:
+        conn.close()
+        return False, "Solicitud no encontrada o ya procesada"
+
+    exp_id, campo, valor_nuevo = solicitud
+
+    if campo == CAMPO_ELIMINAR:
+        # Eliminar el PDF físico si existe
+        c.execute("SELECT pdf_path FROM expedientes WHERE id=?", (exp_id,))
+        row_pdf = c.fetchone()
+        if row_pdf and row_pdf[0] and os.path.exists(row_pdf[0]):
+            try:
+                os.remove(row_pdf[0])
+            except OSError:
+                pass
+        # Eliminar el expediente
+        c.execute("DELETE FROM expedientes WHERE id=?", (exp_id,))
+        c.execute("UPDATE solicitudes_modificacion SET estado_solicitud='APROBADA', revisado_por=?, fecha_revision=CURRENT_TIMESTAMP WHERE id=?",
+                  (revisado_por, solicitud_id))
+        conn.commit()
+        conn.close()
+        return True, "Expediente ELIMINADO exitosamente"
+
+    # Mapeo de campos (modificación normal)
+    campos_db = {
+        "Estado": "estado", "Municipio": "municipio", "Aula Taller": "aula_taller",
+        "Nombres": "nombres", "Apellidos": "apellidos", "Cédula": "cedula",
+        "Correo del Titular": "correo_titular",
+        "Tipo de Programa": "tipo_programa", "Programa": "programa",
+        "Tipo de Expediente": "tipo_expediente", "Observaciones": "observaciones"
+    }
+
+    if campo in campos_db:
+        columna = campos_db[campo]
+        c.execute(f"UPDATE expedientes SET {columna}=?, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?",
+                  (valor_nuevo, exp_id))
+
+    c.execute("UPDATE solicitudes_modificacion SET estado_solicitud='APROBADA', revisado_por=?, fecha_revision=CURRENT_TIMESTAMP WHERE id=?",
+              (revisado_por, solicitud_id))
+
+    conn.commit()
+    conn.close()
+    return True, "Modificación aprobada y aplicada exitosamente"
+
+
+def rechazar_solicitud(solicitud_id, revisado_por):
+    """Rechaza una solicitud de modificación / eliminación"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE solicitudes_modificacion SET estado_solicitud='RECHAZADA', revisado_por=?, fecha_revision=CURRENT_TIMESTAMP WHERE id=?",
+              (revisado_por, solicitud_id))
+    conn.commit()
+    conn.close()
 
 
 # ============================================================
-# GENERACIÓN DE PDF - CERTIFICACIÓN DE CALIFICACIONES
+# FUNCIONES DE LISTAS EDITABLES
 # ============================================================
 
-def generar_certificacion_pdf(estudiante_data, notas_data, nivel_academico, tipo_cert="completa"):
-    """Genera PDF de certificación de calificaciones (2 páginas con barcode, QR, firma)"""
-    
-    buffer = BytesIO()
-    c = pdf_canvas.Canvas(buffer, pagesize=letter)
-    
-    # Dimensiones
-    w, h = letter
-    margin_left = 1.2 * cm
-    margin_right = 1.2 * cm
-    margin_top = 1.5 * cm
-    margin_bottom = 1.5 * cm
-    
-    # Colores
-    azul_oscuro = HexColor("#1a237e")
-    azul_medio = HexColor("#283593")
-    rojo_unem = HexColor("#b71c1c")
-    gris_claro = HexColor("#eeeeee")
-    gris_oscuro = HexColor("#424242")
-    
-    # ---- PÁGINA 1 ----
-    
-    # Encabezado institucional
-    c.setFillColor(azul_oscuro)
-    c.rect(0, h - 3.5*cm, w, 3.5*cm, fill=1, stroke=0)
-    
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(w/2, h - 1.2*cm, "REPÚBLICA BOLIVARIANA DE VENEZUELA")
-    c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(w/2, h - 1.8*cm, "UNIVERSIDAD NACIONAL EXPERIMENTAL DEL MAGISTERIO")
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, h - 2.3*cm, '"SAMUEL ROBINSON"')
-    c.setFont("Helvetica", 9)
-    c.drawCentredString(w/2, h - 2.8*cm, "DIRECCIÓN DE REGISTRO ACADÉMICO")
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(w/2, h - 3.2*cm, "CERTIFICACIÓN DE CALIFICACIONES")
-    
-    # Línea decorativa
-    c.setStrokeColor(rojo_unem)
-    c.setLineWidth(2)
-    c.line(margin_left, h - 3.7*cm, w - margin_right, h - 3.7*cm)
-    
-    # Datos del estudiante
-    y = h - 4.5*cm
-    c.setFillColor(gris_oscuro)
-    c.setFont("Helvetica-Bold", 10)
-    
-    titularidad = estudiante_data.get("titularidad", "")
-    tipo_prog = estudiante_data.get("tipo_programa", "PNF")
-    
-    # Construir encabezado del estudiante según nivel
-    if tipo_prog.startswith("PNFA"):
-        linea_nombre = f"{titularidad}: {estudiante_data['nombres']} {estudiante_data['apellidos']}"
+def obtener_lista_editable(tipo_lista, categoria_padre=None):
+    """Obtiene valores de una lista editable"""
+    conn = get_db()
+    c = conn.cursor()
+    if categoria_padre:
+        c.execute("SELECT valor FROM listas_editables WHERE tipo_lista=? AND categoria_padre=? ORDER BY valor",
+                  (tipo_lista, categoria_padre))
     else:
-        if titularidad:
-            linea_nombre = f"{titularidad}: {estudiante_data['nombres']} {estudiante_data['apellidos']}"
+        c.execute("SELECT DISTINCT categoria_padre FROM listas_editables WHERE tipo_lista=? ORDER BY categoria_padre",
+                  (tipo_lista,))
+    datos = [row[0] for row in c.fetchall()]
+    conn.close()
+    return datos
+
+
+def agregar_valor_lista(tipo_lista, categoria_padre, valor):
+    """Agrega un nuevo valor a una lista editable"""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("INSERT INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                  (tipo_lista, categoria_padre, valor))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def eliminar_valor_lista(tipo_lista, categoria_padre, valor):
+    """Elimina un valor de una lista editable"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM listas_editables WHERE tipo_lista=? AND categoria_padre=? AND valor=?",
+              (tipo_lista, categoria_padre, valor))
+    conn.commit()
+    conn.close()
+
+# ============================================================
+# FUNCIONES DE CORREO ELECTRÓNICO
+# ============================================================
+
+def cargar_smtp_config():
+    """Carga configuración SMTP"""
+    if os.path.exists(SMTP_CONFIG_FILE):
+        with open(SMTP_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "servidor": "smtp.gmail.com",
+        "puerto": 587,
+        "correo_remitente": "",
+        "clave_app": "",
+        "usar_tls": True
+    }
+
+
+def guardar_smtp_config(config):
+    """Guarda configuración SMTP"""
+    with open(SMTP_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def cargar_plantillas_correo():
+    """Carga plantillas de correo desde la base de datos"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT nombre_plantilla, asunto, cuerpo FROM plantillas_correo")
+    datos = {row[0]: {"asunto": row[1], "cuerpo": row[2]} for row in c.fetchall()}
+    conn.close()
+    return datos
+
+
+def guardar_plantilla_correo(nombre, asunto, cuerpo):
+    """Guarda o actualiza una plantilla de correo"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO plantillas_correo (nombre_plantilla, asunto, cuerpo, fecha_modificacion) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+              (nombre, asunto, cuerpo))
+    conn.commit()
+    conn.close()
+
+
+def enviar_correo_registro(correo_destino, datos_expediente, pdf_path=None):
+    """Envía correo de notificación de registro con PDF adjunto"""
+    smtp = cargar_smtp_config()
+    plantillas = cargar_plantillas_correo()
+
+    if not smtp.get("correo_remitente") or not smtp.get("clave_app"):
+        return False, "Configure el correo SMTP primero en Configuración"
+
+    plantilla = plantillas.get("registro_expediente", {
+        "asunto": "Registro de Expediente - UNEM",
+        "cuerpo": "Su expediente ha sido registrado. Cédula: {cedula}"
+    })
+
+    # Reemplazar variables en la plantilla (tolerante a variables faltantes)
+    datos_fmt = dict(datos_expediente)
+    datos_fmt.setdefault("apellidos", "")
+    try:
+        asunto = plantilla["asunto"].format(**datos_fmt)
+        cuerpo = plantilla["cuerpo"].format(**datos_fmt)
+    except KeyError:
+        asunto = plantilla["asunto"]
+        cuerpo = plantilla["cuerpo"]
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = smtp["correo_remitente"]
+        msg["To"] = correo_destino
+        msg["Subject"] = asunto
+        msg.attach(MIMEText(cuerpo, "plain", "utf-8"))
+
+        # Adjuntar PDF si existe
+        if pdf_path and os.path.exists(pdf_path):
+            with open(pdf_path, "rb") as f:
+                part = MIMEBase("application", "pdf")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename=Expediente_{datos_expediente.get('cedula', '')}.pdf")
+                msg.attach(part)
+
+        server = smtplib.SMTP(smtp["servidor"], smtp["puerto"])
+        if smtp.get("usar_tls"):
+            server.starttls()
+        server.login(smtp["correo_remitente"], smtp["clave_app"])
+        server.sendmail(smtp["correo_remitente"], correo_destino, msg.as_string())
+        server.quit()
+        return True, f"Correo enviado exitosamente a {correo_destino}"
+    except Exception as e:
+        return False, f"Error enviando correo: {str(e)}"
+
+
+# ============================================================
+# FUNCION: GENERAR ETIQUETA PARA LA CARPETA
+# ============================================================
+
+def _dibujar_valor_ajustado(c, x, y, texto, max_ancho, font="Helvetica", size=10, leading_mm=5.0):
+    """Dibuja el valor y lo parte en varias lineas si es muy largo. Devuelve la Y final."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.lib.units import mm
+    palabras = str(texto).split()
+    lineas = []
+    linea = ""
+    for w in palabras:
+        prueba = (linea + " " + w).strip()
+        if stringWidth(prueba, font, size) <= max_ancho or not linea:
+            linea = prueba
         else:
-            linea_nombre = f"CIUDADANO(A): {estudiante_data['nombres']} {estudiante_data['apellidos']}"
-    
-    c.drawString(margin_left + 0.3*cm, y, "CÉDULA DE IDENTIDAD:")
-    c.setFont("Helvetica", 10)
-    c.drawString(margin_left + 5.5*cm, y, estudiante_data["cedula"])
-    y -= 0.6*cm
-    
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin_left + 0.3*cm, y, linea_nombre[:80])
-    y -= 0.6*cm
-    
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(margin_left + 0.3*cm, y, "PROGRAMA:")
-    c.setFont("Helvetica", 9)
-    c.drawString(margin_left + 3*cm, y, estudiante_data["programa"])
-    y -= 0.5*cm
-    
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(margin_left + 0.3*cm, y, "NIVEL ACADÉMICO:")
-    c.setFont("Helvetica", 9)
-    c.drawString(margin_left + 5*cm, y, nivel_academico)
-    y -= 0.5*cm
-    
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(margin_left + 0.3*cm, y, "SEDE:")
-    c.setFont("Helvetica", 9)
-    c.drawString(margin_left + 2*cm, y, f"{estudiante_data['estado']} / {estudiante_data['municipio']} / {estudiante_data['aula_taller']}")
-    y -= 0.8*cm
-    
-    # Tabla de calificaciones
-    # Encabezado de tabla
-    c.setFillColor(azul_medio)
-    c.rect(margin_left, y - 0.5*cm, w - margin_left - margin_right, 0.5*cm, fill=1, stroke=0)
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 8)
-    
-    col_positions = [margin_left + 0.2*cm, margin_left + 0.8*cm, w - margin_right - 6*cm,
-                     w - margin_right - 3*cm, w - margin_right - 1.5*cm, w - margin_right - 0.5*cm]
-    headers = ["#", "ASIGNATURA / UC", "CALIFICACIÓN", "EN LETRAS", "UC", "CRÉDITOS"]
-    
-    # Simplified 4-column layout
-    col_positions = [margin_left + 0.3*cm, margin_left + 1*cm, w - margin_right - 5*cm,
-                     w - margin_right - 2.5*cm, w - margin_right - 1*cm]
-    headers = ["#", "UNIDAD CURRICULAR", "CALIF.", "LETRAS", "CRÉD."]
-    
-    for i, header in enumerate(headers):
-        c.drawString(col_positions[i], y - 0.35*cm, header)
-    y -= 0.6*cm
-    
-    # Filas de notas
-    c.setFont("Helvetica", 7)
-    semestre_actual = ""
-    fila = 0
-    max_filas_pag1 = 20
-    notas_pag1 = []
-    notas_pag2 = []
-    
-    for nota in notas_data:
-        # nota: (id, uc, calificacion, calificacion_letras, credito, semestre, fecha_registro)
-        sem = nota[5]
-        if sem != semestre_actual:
-            semestre_actual = sem
-            notas_pag1.append(("", sem, "", "", "", ""))  # Separador de semestre
-        notas_pag1.append(nota)
-    
-    # Si hay más de max_filas, dividir
-    if len(notas_pag1) > max_filas_pag1:
-        notas_pag2 = notas_pag1[max_filas_pag1:]
-        notas_pag1 = notas_pag1[:max_filas_pag1]
-    
-    for nota in notas_pag1:
-        fila += 1
-        if fila > max_filas_pag1:
-            break
-        
-        # Fila alternada
-        if fila % 2 == 0:
-            c.setFillColor(gris_claro)
-            c.rect(margin_left, y - 0.4*cm, w - margin_left - margin_right, 0.4*cm, fill=1, stroke=0)
-        
-        c.setFillColor(black)
-        c.setFont("Helvetica", 7)
-        
-        # Si es separador de semestre
-        if nota[0] == "" and nota[1] != "":
-            c.setFont("Helvetica-Bold", 8)
-            c.drawString(margin_left + 0.3*cm, y - 0.28*cm, nota[1])
-            y -= 0.45*cm
-            continue
-        
-        # Dibujar fila de nota
-        c.drawString(col_positions[0], y - 0.28*cm, str(fila))
-        # Truncar UC si es muy larga
-        uc_text = nota[1][:60] + "..." if len(nota[1]) > 60 else nota[1]
-        c.drawString(col_positions[1], y - 0.28*cm, uc_text)
-        c.drawString(col_positions[2], y - 0.28*cm, str(nota[2]))
-        cal_letras = nota[3] if nota[3] else calificacion_a_letras(nota[2])
-        c.drawString(col_positions[3], y - 0.28*cm, cal_letras[:25])
-        c.drawString(col_positions[4], y - 0.28*cm, str(nota[4]))
-        y -= 0.4*cm
-    
-    # Pie de página 1 - Datos del secretario
-    y_pie = margin_bottom + 3*cm
-    c.setFont("Helvetica", 8)
-    c.setFillColor(gris_oscuro)
-    c.drawString(margin_left + 0.3*cm, y_pie + 2*cm, f"Certificación emitada conforme a Gaceta No. {GACETA_NUM}")
-    c.drawString(margin_left + 0.3*cm, y_pie + 1.5*cm, f"Resolución Conjunta No. {RESOLUCION_NUM}")
-    
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(w/2, y_pie + 0.5*cm, SECRETARIO_NOMBRE)
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(w/2, y_pie, f"C.I. {SECRETARIO_CEDULA}")
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(w/2, y_pie - 0.4*cm, "Secretario General")
-    
-    # Barcode (Code128) de la cédula
-    try:
-        barcode_buffer = BytesIO()
-        barcode = Code128(estudiante_data["cedula"].replace("-", "").replace(".", ""), writer=ImageWriter())
-        barcode.write(barcode_buffer)
-        barcode_buffer.seek(0)
-        barcode_img = ImageReader(barcode_buffer)
-        c.drawImage(barcode_img, margin_left, margin_bottom, width=5*cm, height=1*cm)
-    except Exception:
-        c.setFont("Helvetica", 7)
-        c.drawString(margin_left, margin_bottom + 0.3*cm, f"Cód: {estudiante_data['cedula']}")
-    
-    # QR con hash de verificación
-    hash_ver = hashlib.sha256(f"{estudiante_data['cedula']}|{datetime.now().isoformat()}|{tipo_cert}".encode()).hexdigest()[:16]
-    try:
-        qr = qrcode.make(hash_ver)
-        qr_buffer = BytesIO()
-        qr.save(qr_buffer, format='PNG')
-        qr_buffer.seek(0)
-        qr_img = ImageReader(qr_buffer)
-        c.drawImage(qr_img, w - margin_right - 2*cm, margin_bottom, width=2*cm, height=2*cm)
-    except Exception:
-        pass
-    
-    # Número de página
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(w/2, margin_bottom - 0.5*cm, "Página 1 de 2")
-    
-    # ---- PÁGINA 2 ----
-    c.showPage()
-    
-    # Encabezado simplificado página 2
-    c.setFillColor(azul_oscuro)
-    c.rect(0, h - 2*cm, w, 2*cm, fill=1, stroke=0)
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, h - 0.8*cm, "CERTIFICACIÓN DE CALIFICACIONES (Continuación)")
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(w/2, h - 1.5*cm, f"C.I.: {estudiante_data['cedula']} - {estudiante_data['apellidos']}, {estudiante_data['nombres']}")
-    
-    y = h - 3*cm
-    
-    if notas_pag2:
-        # Repetir encabezado de tabla
-        c.setFillColor(azul_medio)
-        c.rect(margin_left, y - 0.5*cm, w - margin_left - margin_right, 0.5*cm, fill=1, stroke=0)
-        c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 8)
-        for i, header in enumerate(headers):
-            c.drawString(col_positions[i], y - 0.35*cm, header)
-        y -= 0.6*cm
-        
-        fila_continua = max_filas_pag1
-        for nota in notas_pag2:
-            fila_continua += 1
-            
-            if fila_continua % 2 == 0:
-                c.setFillColor(gris_claro)
-                c.rect(margin_left, y - 0.4*cm, w - margin_left - margin_right, 0.4*cm, fill=1, stroke=0)
-            
-            c.setFillColor(black)
-            c.setFont("Helvetica", 7)
-            
-            if nota[0] == "" and nota[1] != "":
-                c.setFont("Helvetica-Bold", 8)
-                c.drawString(margin_left + 0.3*cm, y - 0.28*cm, nota[1])
-                y -= 0.45*cm
-                continue
-            
-            c.drawString(col_positions[0], y - 0.28*cm, str(fila_continua))
-            uc_text = nota[1][:60] + "..." if len(nota[1]) > 60 else nota[1]
-            c.drawString(col_positions[1], y - 0.28*cm, uc_text)
-            c.drawString(col_positions[2], y - 0.28*cm, str(nota[2]))
-            cal_letras = nota[3] if nota[3] else calificacion_a_letras(nota[2])
-            c.drawString(col_positions[3], y - 0.28*cm, cal_letras[:25])
-            c.drawString(col_positions[4], y - 0.28*cm, str(nota[4]))
-            y -= 0.4*cm
-    else:
-        c.setFont("Helvetica", 10)
-        c.setFillColor(gris_oscuro)
-        c.drawCentredString(w/2, y, "(Continúa en página siguiente si aplica)")
-    
-    # Resumen de créditos y promedio
-    y_resumen = max(y - 1*cm, margin_bottom + 6*cm)
-    c.setFont("Helvetica-Bold", 9)
-    c.setFillColor(azul_oscuro)
-    c.drawString(margin_left + 0.3*cm, y_resumen, "RESUMEN ACADÉMICO")
-    y_resumen -= 0.5*cm
-    
-    total_creditos = 0
-    total_uc = len(notas_data)
-    notas_numericas = []
-    for nota in notas_data:
-        total_creditos += nota[4]  # credito
+            lineas.append(linea)
+            linea = w
+    if linea:
+        lineas.append(linea)
+    if not lineas:
+        lineas = [""]
+    c.setFont(font, size)
+    for ln in lineas:
+        c.drawString(x, y, ln)
+        y -= leading_mm * mm
+    return y
+
+
+def generar_etiqueta_pdf(row):
+    """Genera una etiqueta PDF con los datos del titular (sin el PDF del expediente),
+    con el logo de la UNEM, lista para imprimir y pegar en la parte superior de la carpeta."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+
+    buffer = BytesIO()
+    ancho, alto = letter
+    c = canvas.Canvas(buffer, pagesize=letter)
+
+    margen = 15 * mm
+    x0 = margen
+    x1 = ancho - margen
+    etq_alto = 150 * mm
+    caja_y1 = alto - margen
+    caja_y0 = caja_y1 - etq_alto
+
+    # Marco exterior de la etiqueta
+    c.setLineWidth(2)
+    c.rect(x0, caja_y0, x1 - x0, etq_alto)
+
+    # Logo institucional (si existe un archivo de logo en la app)
+    logo_paths = ["logo_unem.png", "logo.png", "logo_unem.jpg", "logo.jpg"]
+    logo_file = next((p for p in logo_paths if os.path.exists(p)), None)
+    if logo_file:
         try:
-            n = int(nota[2])
-            notas_numericas.append(n)
-        except (ValueError, TypeError):
+            c.drawImage(ImageReader(logo_file), x0 + 8 * mm, caja_y1 - 32 * mm,
+                        width=26 * mm, height=26 * mm,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
             pass
-    
-    promedio = sum(notas_numericas) / len(notas_numericas) if notas_numericas else 0
-    
-    c.setFont("Helvetica", 9)
-    c.setFillColor(black)
-    c.drawString(margin_left + 0.3*cm, y_resumen, f"Total Unidades Curriculares: {total_uc}")
-    y_resumen -= 0.4*cm
-    c.drawString(margin_left + 0.3*cm, y_resumen, f"Total Créditos: {total_creditos}")
-    y_resumen -= 0.4*cm
-    if promedio > 0:
-        c.drawString(margin_left + 0.3*cm, y_resumen, f"Promedio Ponderado: {promedio:.2f}")
-    
-    # Firma del Secretario (líneas y nombre)
-    y_firma = margin_bottom + 4*cm
-    c.setStrokeColor(black)
-    c.setLineWidth(0.5)
-    c.line(w/2 - 4*cm, y_firma, w/2 + 4*cm, y_firma)
-    
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(w/2, y_firma - 0.5*cm, SECRETARIO_NOMBRE)
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(w/2, y_firma - 1*cm, f"C.I. {SECRETARIO_CEDULA}")
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(w/2, y_firma - 1.4*cm, "Secretario General")
-    c.drawCentredString(w/2, y_firma - 1.8*cm, f"Gaceta No. {GACETA_NUM} / Resolución Conjunta No. {RESOLUCION_NUM}")
-    
-    # Sello de agua - "DOCUMENTO OFICIAL"
-    c.saveState()
-    c.setFillColor(HexColor("#e0e0e0"))
-    c.setFont("Helvetica-Bold", 40)
-    c.translate(w/2, h/2)
-    c.rotate(45)
-    c.drawCentredString(0, 0, "DOCUMENTO OFICIAL")
-    c.restoreState()
-    
-    # Hash de verificación en la parte inferior
-    c.setFont("Helvetica", 6)
-    c.setFillColor(gris_oscuro)
-    c.drawCentredString(w/2, margin_bottom, f"Hash de Verificación: {hash_ver}")
-    c.drawCentredString(w/2, margin_bottom - 0.4*cm, "Página 2 de 2")
-    
+
+    # Encabezado institucional
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(ancho / 2, caja_y1 - 11 * mm, "REPUBLICA BOLIVARIANA DE VENEZUELA")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(ancho / 2, caja_y1 - 18 * mm, "UNEM - Universidad Nacional Experimental del Magisterio")
+    c.setFont("Helvetica-Bold", 15)
+    c.drawCentredString(ancho / 2, caja_y1 - 28 * mm, "EXPEDIENTE ESTUDIANTIL")
+    c.setLineWidth(1)
+    c.line(x0 + 8 * mm, caja_y1 - 33 * mm, x1 - 8 * mm, caja_y1 - 33 * mm)
+
+    # Campos (todos los datos personales, menos el PDF)
+    nombre_completo = f"{row.get('nombres', '')} {row.get('apellidos', '')}".strip()
+    campos = [
+        ("NOMBRES Y APELLIDOS", nombre_completo),
+        ("CEDULA DE IDENTIDAD", row.get("cedula", "")),
+        ("ESTADO", row.get("estado", "")),
+        ("MUNICIPIO", row.get("municipio", "")),
+        ("AULA TALLER", row.get("aula_taller", "") or "-"),
+        ("TIPO DE PROGRAMA", row.get("tipo_programa", "")),
+        ("PROGRAMA", row.get("programa", "")),
+        ("TIPO DE EXPEDIENTE", row.get("tipo_expediente", "")),
+        ("CORREO ELECTRONICO", row.get("correo_titular", "") or "-"),
+        ("FECHA DE REGISTRO", str(row.get("fecha_registro", ""))[:19]),
+    ]
+    etq_x = x0 + 10 * mm
+    val_x = x0 + 58 * mm
+    val_ancho = (x1 - 10 * mm) - val_x
+    y = caja_y1 - 44 * mm
+    for etiqueta, valor in campos:
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(etq_x, y, f"{etiqueta}:")
+        y_val = _dibujar_valor_ajustado(c, val_x, y, valor, val_ancho, size=10, leading_mm=5.5)
+        # avanzar segun cuantas lineas ocupo el valor
+        lineas_usadas = max(1, round((y - y_val) / (5.5 * mm)))
+        y -= max(8 * mm, lineas_usadas * 5.5 * mm)
+
+    c.showPage()
     c.save()
     buffer.seek(0)
-    return buffer, hash_ver
+    return buffer.getvalue()
 
 
-def generar_certificacion_lote(estudiantes_ids, nivel_academico, tipo_cert="completa"):
-    """Genera un ZIP con certificaciones PDF individuales para múltiples estudiantes"""
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for est_id in estudiantes_ids:
-            est_data = buscar_estudiante_por_id(est_id)
-            if est_data:
-                notas = obtener_notas_estudiante(est_id)
-                if notas:
-                    pdf_buffer, _ = generar_certificacion_pdf(est_data, notas, nivel_academico, tipo_cert)
-                    filename = f"Cert_{est_data['cedula'].replace('-','').replace('.','')}_{nivel_academico}.pdf"
-                    zf.writestr(filename, pdf_buffer.getvalue())
-    zip_buffer.seek(0)
-    return zip_buffer
+# ============================================================
+# CERTIFICACIÓN / CONSTANCIA EN PDF (escudo + QR + código de barras)
+# ============================================================
+
+ESCUDO_PATHS = ["escudo_venezuela.png", "escudo.png", "logo_unem.png", "logo.png"]
+# Firma digital (escaneada) del Secretario. Suba una imagen con fondo transparente
+# (PNG) a la raiz del repositorio con alguno de estos nombres para que aparezca
+# automaticamente sobre la linea de la firma en la certificacion.
+FIRMA_PATHS = ["firma_lenin_romero.png", "firma_secretario.png", "firma.png", "firma.jpg"]
+_MESES_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
 
-def buscar_estudiante_por_id(est_id):
-    conn = sqlite3.connect(DB_FILE)
+def _fecha_larga_es(dt=None):
+    dt = dt or datetime.now()
+    return f"{dt.day} de {_MESES_ES[dt.month]} de {dt.year}"
+
+
+def titulo_por_genero(programa, sexo):
+    """Devuelve el título/grado redactado según el género del titular.
+    sexo: 'F'/'FEMENINO' -> forma femenina; cualquier otro valor -> masculino.
+    Ej.: 'LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'
+         -> Femenino: 'LICENCIADA EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'
+         -> Masculino: 'LICENCIADO EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'"""
+    p = (programa or "").strip()
+    up = p.upper()
+    fem = str(sexo or "").upper().startswith("F")
+    if up.startswith("LICENCIADO/A"):
+        base = "LICENCIADA" if fem else "LICENCIADO"
+        return base + p[len("LICENCIADO/A"):]
+    if up.startswith("LICENCIATURA EN"):
+        base = "LICENCIADA EN" if fem else "LICENCIADO EN"
+        return base + p[len("LICENCIATURA EN"):]
+    if up.startswith("DOCTOR(A)"):
+        base = "DOCTORA" if fem else "DOCTOR"
+        return base + p[len("DOCTOR(A)"):]
+    if up.startswith("ESPECIALIZACIÓN EN"):
+        # El título profesional es 'ESPECIALISTA EN ...' (igual en ambos géneros)
+        return "ESPECIALISTA EN" + p[len("ESPECIALIZACIÓN EN"):]
+    if up.startswith("MAESTRÍA EN"):
+        # El grado académico es 'MAGÍSTER EN ...' (igual en ambos géneros)
+        return "MAGÍSTER EN" + p[len("MAESTRÍA EN"):]
+    return p
+
+
+# ------------------------------------------------------------
+# MALLAS CURRICULARES (materias con U.C. por programa)
+# ------------------------------------------------------------
+
+def obtener_malla(programa, incluir_introductorio=True):
+    """Lista de materias del programa, en orden. Cada item es un dict:
+    {orden, periodo, materia, creditos, es_introductorio}."""
+    conn = get_db()
     c = conn.cursor()
-    c.execute("""SELECT id, cedula, apellidos, nombres, sexo, fecha_nacimiento, lugar_nacimiento,
-                       estado, municipio, aula_taller, tipo_programa, programa, nivel_academico,
-                       tipo_ingreso, fecha_registro, titularidad
-                FROM estudiantes WHERE id = ?""", (est_id,))
-    row = c.fetchone()
+    if incluir_introductorio:
+        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio
+                     FROM mallas WHERE programa=? ORDER BY orden, id""", (programa,))
+    else:
+        c.execute("""SELECT orden, periodo, materia, creditos, es_introductorio
+                     FROM mallas WHERE programa=? AND es_introductorio=0 ORDER BY orden, id""", (programa,))
+    filas = c.fetchall()
     conn.close()
-    if row:
-        return {
-            "id": row[0], "cedula": row[1], "apellidos": row[2], "nombres": row[3],
-            "sexo": row[4], "fecha_nacimiento": row[5], "lugar_nacimiento": row[6],
-            "estado": row[7], "municipio": row[8], "aula_taller": row[9],
-            "tipo_programa": row[10], "programa": row[11], "nivel_academico": row[12],
-            "tipo_ingreso": row[13], "fecha_registro": row[14], "titularidad": row[15]
-        }
-    return None
+    return [{"orden": r[0], "periodo": r[1] or "", "materia": r[2],
+             "creditos": r[3] or 0, "es_introductorio": int(r[4] or 0)} for r in filas]
 
+
+def guardar_materia_malla(programa, periodo, materia, creditos, es_introductorio, orden=None):
+    """Agrega o actualiza una materia de la malla de un programa."""
+    conn = get_db()
+    c = conn.cursor()
+    if orden is None:
+        c.execute("SELECT COALESCE(MAX(orden),0)+1 FROM mallas WHERE programa=?", (programa,))
+        orden = c.fetchone()[0]
+    try:
+        c.execute("""INSERT INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  (programa, int(orden), periodo, materia, float(creditos or 0), int(es_introductorio)))
+        ok = True
+    except sqlite3.IntegrityError:
+        # Ya existe esa materia en ese programa -> actualizar
+        c.execute("""UPDATE mallas SET orden=?, periodo=?, creditos=?, es_introductorio=?
+                     WHERE programa=? AND materia=?""",
+                  (int(orden), periodo, float(creditos or 0), int(es_introductorio), programa, materia))
+        ok = True
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def eliminar_materia_malla(programa, materia):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM mallas WHERE programa=? AND materia=?", (programa, materia))
+    conn.commit()
+    conn.close()
+
+
+def reemplazar_malla(programa, filas):
+    """Reemplaza toda la malla de un programa. filas: lista de dicts con
+    periodo, materia, creditos, es_introductorio (en el orden deseado)."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM mallas WHERE programa=?", (programa,))
+    orden = 1
+    for f in filas:
+        c.execute("""INSERT OR IGNORE INTO mallas (programa, orden, periodo, materia, creditos, es_introductorio)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  (programa, orden, f.get("periodo", ""), f.get("materia", ""),
+                   float(f.get("creditos", 0) or 0), int(f.get("es_introductorio", 0))))
+        orden += 1
+    conn.commit()
+    conn.close()
+
+
+def obtener_programas_con_malla():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT programa FROM mallas ORDER BY programa")
+    r = [x[0] for x in c.fetchall()]
+    conn.close()
+    return r
+
+
+# ------------------------------------------------------------
+# NOTAS (calificaciones por estudiante)
+# ------------------------------------------------------------
+
+def obtener_notas(cedula):
+    """Devuelve un dict {materia: nota} de las notas cargadas del estudiante."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT materia, nota FROM notas WHERE cedula=?", (cedula,))
+    r = {row[0]: row[1] for row in c.fetchall()}
+    conn.close()
+    return r
+
+
+def guardar_notas(cedula, programa, notas_por_materia):
+    """Guarda/actualiza las notas del estudiante. notas_por_materia: dict
+    {materia: (creditos, nota)}. Las notas vacías se ignoran."""
+    conn = get_db()
+    c = conn.cursor()
+    for materia, (creditos, nota) in notas_por_materia.items():
+        nota = str(nota or "").strip()
+        if nota == "":
+            c.execute("DELETE FROM notas WHERE cedula=? AND materia=?", (cedula, materia))
+            continue
+        c.execute("SELECT id FROM notas WHERE cedula=? AND materia=?", (cedula, materia))
+        if c.fetchone():
+            c.execute("UPDATE notas SET nota=?, creditos=?, programa=? WHERE cedula=? AND materia=?",
+                      (nota, float(creditos or 0), programa, cedula, materia))
+        else:
+            c.execute("""INSERT INTO notas (cedula, programa, materia, creditos, nota)
+                         VALUES (?, ?, ?, ?, ?)""",
+                      (cedula, programa, materia, float(creditos or 0), nota))
+    conn.commit()
+    conn.close()
+
+
+def generar_certificado_pdf(row):
+    """CERTIFICACIÓN DE CALIFICACIONES en PDF: escudo, título según el género,
+    tabla de asignaturas con Unidades de Crédito (U.C.) y calificaciones tomadas
+    de la malla del programa (en orden y SIN las materias introductorias),
+    firma del Secretario, código QR y código de barras."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.graphics.barcode import code128
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.barcode.qr import QrCodeWidget
+    from reportlab.graphics import renderPDF
+
+    def _g(k):
+        try:
+            v = row.get(k, "")
+        except AttributeError:
+            v = row[k] if k in row else ""
+        return str(v or "").strip()
+
+    ancho, alto = letter
+    margen = 18 * mm
+    x0, x1 = margen, ancho - margen
+    centro = ancho / 2
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+
+    nombre_completo = f"{_g('nombres')} {_g('apellidos')}".strip()
+    cedula = _g("cedula")
+    tipo_programa = _g("tipo_programa")
+    programa = _g("programa")
+    estado = _g("estado")
+    municipio = _g("municipio")
+    sexo = _g("sexo")
+    periodo = _g("periodo_culminacion") or "No especificado"
+    fecha_emision = _fecha_larga_es()
+    titulo_grado = titulo_por_genero(programa, sexo)
+
+    malla = obtener_malla(programa, incluir_introductorio=False)
+    notas = obtener_notas(cedula)
+
+    escudo = next((p for p in ESCUDO_PATHS if os.path.exists(p)), None)
+    firma = next((p for p in FIRMA_PATHS if os.path.exists(p)), None)
+
+    def _encabezado(y):
+        if escudo:
+            try:
+                ew, eh = 22 * mm, 24 * mm
+                c.drawImage(ImageReader(escudo), centro - ew / 2, y - eh,
+                            width=ew, height=eh, preserveAspectRatio=True, mask="auto")
+                y -= eh + 2 * mm
+            except Exception:
+                y -= 2 * mm
+        c.setFont("Helvetica-Bold", 10.5)
+        c.drawCentredString(centro, y, "REPÚBLICA BOLIVARIANA DE VENEZUELA")
+        y -= 4.5 * mm
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio “Samuel Robinson”")
+        y -= 4 * mm
+        c.setFont("Helvetica", 8.5)
+        c.drawCentredString(centro, y, "Secretaría")
+        y -= 8 * mm
+        c.setFont("Helvetica-Bold", 13)
+        c.drawCentredString(centro, y, "CERTIFICACIÓN DE CALIFICACIONES")
+        y -= 8 * mm
+        return y
+
+    def _cab_tabla(y):
+        c.setFillColorRGB(0.12, 0.16, 0.5)
+        c.rect(x0, y - 6 * mm, x1 - x0, 6 * mm, fill=1, stroke=0)
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(x0 + 2 * mm, y - 4.2 * mm, "N°")
+        c.drawString(x0 + 12 * mm, y - 4.2 * mm, "ASIGNATURA")
+        c.drawRightString(x1 - 22 * mm, y - 4.2 * mm, "U.C.")
+        c.drawRightString(x1 - 2 * mm, y - 4.2 * mm, "CALIF.")
+        c.setFillColorRGB(0, 0, 0)
+        return y - 6 * mm
+
+    y = _encabezado(alto - margen)
+    intro = (f"Quien suscribe, Secretario de la Universidad Nacional Experimental del "
+             f"Magisterio “Samuel Robinson”, certifica que el/la ciudadano(a) "
+             f"{nombre_completo}, titular de la Cédula de Identidad N° {cedula}, cursó "
+             f"y aprobó las asignaturas que se detallan, correspondientes al programa de "
+             f"{titulo_grado}, en el Estado {estado}, Municipio {municipio}, período de "
+             f"culminación {periodo}:")
+    palabras = intro.split()
+    linea, lineas = "", []
+    for w in palabras:
+        prueba = (linea + " " + w).strip()
+        if stringWidth(prueba, "Helvetica", 9.5) <= (x1 - x0) or not linea:
+            linea = prueba
+        else:
+            lineas.append(linea); linea = w
+    if linea:
+        lineas.append(linea)
+    c.setFont("Helvetica", 9.5)
+    for ln in lineas:
+        c.drawString(x0, y, ln); y -= 5 * mm
+    y -= 3 * mm
+
+    y = _cab_tabla(y)
+    total_uc = 0.0
+    n = 0
+    fila_alto = 5.6 * mm
+    periodo_actual = None
+    if not malla:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(x0 + 2 * mm, y - 4.5 * mm, "(Aún no hay malla curricular cargada para este programa.)")
+        y -= fila_alto
+    for m in malla:
+        if y < margen + 58 * mm:
+            c.showPage()
+            y = _encabezado(alto - margen)
+            y = _cab_tabla(y)
+            periodo_actual = None
+        if m["periodo"] and m["periodo"] != periodo_actual:
+            periodo_actual = m["periodo"]
+            c.setFillColorRGB(0.90, 0.92, 0.98)
+            c.rect(x0, y - 5 * mm, x1 - x0, 5 * mm, fill=1, stroke=0)
+            c.setFillColorRGB(0, 0, 0)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(x0 + 2 * mm, y - 3.6 * mm, periodo_actual)
+            y -= 5 * mm
+        n += 1
+        uc = float(m["creditos"] or 0)
+        total_uc += uc
+        nota = notas.get(m["materia"], "")
+        c.setFont("Helvetica", 8.5)
+        c.drawString(x0 + 2 * mm, y - 4 * mm, str(n))
+        materia_txt = m["materia"]
+        limite = (x1 - 26 * mm) - (x0 + 12 * mm)
+        if stringWidth(materia_txt, "Helvetica", 8.5) > limite:
+            while materia_txt and stringWidth(materia_txt + "…", "Helvetica", 8.5) > limite:
+                materia_txt = materia_txt[:-1]
+            materia_txt = materia_txt.rstrip() + "…"
+        c.drawString(x0 + 12 * mm, y - 4 * mm, materia_txt)
+        c.drawRightString(x1 - 22 * mm, y - 4 * mm, (f"{uc:g}" if uc else "-"))
+        c.drawRightString(x1 - 2 * mm, y - 4 * mm, str(nota) if nota else "-")
+        c.setStrokeColorRGB(0.8, 0.8, 0.8)
+        c.setLineWidth(0.3)
+        c.line(x0, y - fila_alto, x1, y - fila_alto)
+        y -= fila_alto
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x0 + 2 * mm, y - 4.5 * mm, "TOTAL UNIDADES DE CRÉDITO")
+    c.drawRightString(x1 - 22 * mm, y - 4.5 * mm, f"{total_uc:g}")
+    y -= 11 * mm
+
+    if y < margen + 50 * mm:
+        c.showPage()
+        y = alto - margen - 12 * mm
+
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.drawString(x0, y, f"Certificación que se expide a petición de la parte interesada, en Caracas el {fecha_emision}.")
+    y -= 18 * mm
+
+    if firma:
+        try:
+            fw, fh = 45 * mm, 18 * mm
+            c.drawImage(ImageReader(firma), centro - fw / 2, y, width=fw, height=fh,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.7)
+    c.line(centro - 40 * mm, y, centro + 40 * mm, y)
+    y -= 4.5 * mm
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawCentredString(centro, y, "LENIN ROBERTO ROMERO ROSA")
+    y -= 4 * mm
+    c.setFont("Helvetica", 8.5)
+    c.drawCentredString(centro, y, "SECRETARIO")
+    y -= 4 * mm
+    c.setFont("Helvetica", 7.5)
+    c.drawCentredString(centro, y, "Según Gaceta N° 41.632 - Resolución Conjunta N° 0026/002")
+    y -= 5 * mm
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawCentredString(centro, y, "Válido solo con el sello húmedo regional y la firma autógrafa del responsable de la secretaría del estado.")
+
+    qr_texto = (f"UNEM - CERTIFICACION DE CALIFICACIONES\nNombres: {nombre_completo}\n"
+                f"Titulo: {titulo_grado}\nCedula: {cedula}\nPeriodo: {periodo}\n"
+                f"Estado: {estado}\nEmision: {fecha_emision}")
+    y_pie = margen + 4 * mm
+    qrw = QrCodeWidget(qr_texto)
+    b = qrw.getBounds()
+    qsize = 24 * mm
+    d = Drawing(qsize, qsize, transform=[qsize / (b[2] - b[0]), 0, 0, qsize / (b[3] - b[1]), 0, 0])
+    d.add(qrw)
+    renderPDF.draw(d, c, x0, y_pie)
+    c.setFont("Helvetica", 6.5)
+    c.drawString(x0, y_pie - 3.5 * mm, "Escanee el QR para verificar los datos")
+
+    cod = "".join(ch for ch in cedula if ch.isalnum()) or "0"
+    try:
+        barcode = code128.Code128(cod, barHeight=14 * mm, barWidth=0.42 * mm)
+        barcode.drawOn(c, x1 - barcode.width, y_pie + 4 * mm)
+    except Exception:
+        pass
+    c.setFont("Helvetica", 7)
+    c.drawRightString(x1, y_pie, f"Código: {cod}")
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 # ============================================================
-# CONFIGURACIÓN DE STREAMLIT
+# INICIALIZACIÓN
 # ============================================================
 
-st.set_page_config(
-    page_title="Expedientes UNEM",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+init_database()
 
-# --- Ocultar barra de herramientas de Streamlit (logo gato, compartir, editar, GitHub) ---
-hide_streamlit_style = """
+# CSS Institucional
+st.markdown("""
 <style>
-/* Ocultar el menú hamburguesa y la barra de herramientas superior */
-#MainMenu {visibility: hidden;}
-header {visibility: hidden;}
-/* Ocultar el footer de Streamlit */
-footer {visibility: hidden;}
-/* Ocultar boton de deploy/compartir */
-.stDeployButton {visibility: hidden;}
-/* Eliminar espacio vacio arriba */
-.block-container {padding-top: 1rem;}
+    .main-header {
+        background: linear-gradient(135deg, #1a237e 0%, #0d47a1 50%, #1565c0 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .main-header h1 { margin:0; font-size:1.6rem; }
+    .main-header p { margin:0.2rem 0 0 0; font-size:0.85rem; opacity:0.9; }
+    .stat-card {
+        background: #f8f9fa;
+        border-left: 4px solid #1565c0;
+        padding: 0.8rem;
+        border-radius: 8px;
+        text-align: center;
+    }
+    .stat-card h2 { margin:0; color:#1565c0; font-size:1.5rem; }
+    .stat-card p { margin:0; color:#666; font-size:0.8rem; }
+    .stat-green { border-left-color: #4caf50; }
+    .stat-green h2 { color: #4caf50; }
+    .stat-orange { border-left-color: #ff9800; }
+    .stat-orange h2 { color: #ff9800; }
+    .stat-red { border-left-color: #f44336; }
+    .stat-red h2 { color: #f44336; }
+    .success-box {
+        background: #e8f5e9;
+        border-left: 4px solid #4caf50;
+        padding: 1rem;
+        border-radius: 8px;
+    }
+    .warning-box {
+        background: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 1rem;
+        border-radius: 8px;
+    }
+    .logo-area {
+        text-align: center;
+        padding: 1rem 0;
+    }
+    .logo-placeholder {
+        width: 120px; height: 120px;
+        border: 3px dashed #1565c0;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        color: #1565c0;
+        font-size: 0.8rem;
+        text-align: center;
+        background: #e3f2fd;
+    }
 </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-# Inicializar DB
-init_db()
-
-# Inicializar session_state
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.user_info = None
-    st.session_state.user_rol = None
+""", unsafe_allow_html=True)
 
 # ============================================================
-# PANTALLA DE LOGIN
+# GESTIÓN DE SESIÓN
 # ============================================================
 
-def mostrar_login():
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+    st.session_state.usuario = None
+    st.session_state.rol = None
+    st.session_state.nombre = None
+    st.session_state.correo = None
+
+
+def cerrar_sesion():
+    st.session_state.autenticado = False
+    st.session_state.usuario = None
+    st.session_state.rol = None
+    st.session_state.nombre = None
+    st.session_state.correo = None
+    st.rerun()
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+if not st.session_state.autenticado:
+    # Logo placeholder
     st.markdown("""
-    <div style='text-align: center; padding: 2rem;'>
-        <h1 style='color: #1a237e;'>📚 Expedientes UNEM</h1>
-        <h3 style='color: #424242;'>Sistema de Gestión de Expedientes Estudiantiles</h3>
-        <p style='color: #757575;'>Universidad Nacional Experimental del Magisterio "Samuel Robinson"</p>
-        <p style='color: #b71c1c; font-weight: bold;'>ETAPA 2 - Certificaciones de Calificaciones</p>
+    <div class='logo-area'>
+        <div class='logo-placeholder'>
+            LOGO<br>INSTITUCIONAL<br>(Agregue aquí)
+        </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_form"):
-            cedula = st.text_input("Cédula de Identidad", placeholder="Ej: V-12.345.678")
-            clave = st.text_input("Contraseña", type="password", placeholder="Mínimo 8 caracteres")
-            submitted = st.form_submit_button("Ingresar", use_container_width=True)
-            
-            if submitted:
-                if not cedula or not clave:
-                    st.error("⚠️ Debe ingresar cédula y contraseña.")
-                else:
-                    user = verificar_login(cedula, clave)
-                    if user:
-                        user_id, nombre, ced, rol, estado = user
-                        if estado == "Activo":
-                            st.session_state.logged_in = True
-                            st.session_state.user_info = {"id": user_id, "nombre": nombre, "cedula": ced, "rol": rol}
-                            st.session_state.user_rol = rol
-                            st.rerun()
-                        else:
-                            st.error("⚠️ Su cuenta está inactiva. Contacte al administrador.")
-                    else:
-                        st.error("❌ Cédula o contraseña incorrecta.")
-        
-        st.info("💡 **Credenciales por defecto:**\n- Admin: `admin` / `admin123`\n- Secretaría: `V-2.956.814` / `lenin123`")
 
+    st.markdown("""
+    <div class='main-header'>
+        <h1>📋 Sistema de Registro de Expedientes</h1>
+        <p>UNEM — Período 2026-II</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ============================================================
-# SIDEBAR - NAVEGACIÓN
-# ============================================================
-
-def mostrar_sidebar():
-    rol = st.session_state.user_rol
-    
-    st.sidebar.markdown(f"### 👤 {st.session_state.user_info['nombre']}")
-    st.sidebar.caption(f"📋 {st.session_state.user_info['cedula']} | {rol}")
-    
-    # Opciones según rol
-    paginas = []
-    
-    # Todos los niveles
-    paginas.append("📊 Dashboard")
-    paginas.append("📝 Registrar Estudiante")
-    paginas.append("🔍 Consultar Expediente")
-    paginas.append("📖 Cargar Notas")
-    paginas.append("📄 Certificaciones")
-    
-    # Nivel 2 y 3
-    if rol in ["Secretaría General", "Secretaría Situada"]:
-        paginas.append("📋 Listado de Estudiantes")
-    
-    # Solo Nivel 1
-    if rol == "Admin Principal":
-        paginas.append("👥 Gestión de Usuarios")
-        paginas.append("🏫 Gestión de Almacenes")
-        paginas.append("⚙️ Configuración de Listas")
-        paginas.append("🔓 Apertura/Cierre de Notas")
-        paginas.append("🗑️ Eliminar Registro")
-        paginas.append("📋 Autorizaciones")
-        paginas.append("🔎 Verificar Expediente Etapa 1")
-    
-    # Nivel 2 y 3
-    if rol in ["Secretaría General", "Secretaría Situada"]:
-        paginas.append("🗑️ Eliminar Registro")
-        paginas.append("📋 Autorizaciones")
-    
-    # Todos los niveles - Respaldo
-    paginas.append("💾 Respaldo y Exportación")
-    
-    paginas.append("🚪 Cerrar Sesión")
-    
-    pagina = st.sidebar.radio("Navegación", paginas, label_visibility="collapsed", key="sidebar_nav_radio")
-    return pagina
-
-
-
-# ============================================================
-# PÁGINA: DASHBOARD
-# ============================================================
-
-def pagina_dashboard():
-    st.title("📊 Dashboard - Expedientes UNEM")
     st.markdown("---")
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # Estadísticas
-    c.execute("SELECT COUNT(*) FROM estudiantes")
-    total_est = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT estado) FROM estudiantes")
-    total_estados = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT programa) FROM estudiantes")
-    total_programas = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM certificaciones")
-    total_cert = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM usuarios WHERE estado = 'Activo'")
-    total_users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM almacenes")
-    total_alm = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM notas")
-    total_notas = c.fetchone()[0]
-    
-    conn.close()
-    
+    col_login1, col_login2, col_login3 = st.columns([1,1,1])
+    with col_login2:
+        st.subheader("🔐 Iniciar Sesión")
+        usuario = st.text_input("👤 Usuario", key="login_user")
+        clave = st.text_input("🔑 Contraseña", type="password", key="login_pass")
+        if st.button("Ingresar", use_container_width=True, type="primary"):
+            if usuario and clave:
+                resultado = verificar_credenciales(usuario, clave)
+                if resultado:
+                    st.session_state.autenticado = True
+                    st.session_state.usuario = resultado[0]
+                    st.session_state.rol = resultado[1]
+                    st.session_state.nombre = resultado[2]
+                    st.session_state.correo = resultado[3]
+                    st.rerun()
+                else:
+                    st.error("❌ Usuario o contraseña incorrectos")
+            else:
+                st.warning("⚠️ Ingrese usuario y contraseña")
+
+        st.markdown("---")
+        st.caption("🔒 Acceso restringido. Ingrese sus credenciales institucionales.")
+
+    st.stop()
+
+
+# ============================================================
+# SIDEBAR - NAVEGACIÓN SEGÚN ROL
+# ============================================================
+
+rol = st.session_state.rol
+nombre_usuario = st.session_state.nombre
+
+with st.sidebar:
+    # Logo en sidebar
+    st.markdown("""
+    <div class='logo-area'>
+        <div class='logo-placeholder' style='width:80px;height:80px;font-size:0.6rem;'>
+            LOGO
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"### 👤 {nombre_usuario}")
+
+    rol_nombre = {"ADMIN_PRINCIPAL": "🏛️ Administrador Principal",
+                   "ADMIN_AUXILIAR": "🛡️ Administrador Auxiliar",
+                   "ADMIN_REGIONAL": "📍 Administrador Regional"}
+    st.caption(f"**Rol:** {rol_nombre.get(rol, rol)}")
+
+    st.markdown("---")
+
+    # Menú según rol
+    if rol == "ADMIN_PRINCIPAL":
+        menu = st.radio("📍 Navegación", [
+            "🏠 Inicio",
+            "📝 Registrar Expediente",
+            "📊 Consultar Expedientes",
+            "🔍 Buscar Expediente",
+            "📄 Generar Documentos",
+            "🧮 Mallas Curriculares",
+            "📝 Cargar Notas",
+            "📋 Solicitudes de Modificación",
+            "📈 Estadísticas",
+            "👥 Gestión de Usuarios",
+            "⚙️ Configuración de Listas",
+            "📧 Configuración de Correo",
+            "📥 Respaldo de Datos",
+        ], key="nav_principal")
+    elif rol == "ADMIN_AUXILIAR":
+        menu = st.radio("📍 Navegación", [
+            "🏠 Inicio",
+            "📝 Registrar Expediente",
+            "📊 Consultar Expedientes",
+            "🔍 Buscar Expediente",
+            "📄 Generar Documentos",
+            "🧮 Mallas Curriculares",
+            "📝 Cargar Notas",
+            "📋 Solicitudes de Modificación",
+            "📈 Estadísticas",
+            "👥 Gestión de Usuarios",
+            "📧 Configuración de Correo",
+            "📥 Respaldo de Datos",
+        ], key="nav_auxiliar")
+    else:  # ADMIN_REGIONAL
+        menu = st.radio("📍 Navegación", [
+            "🏠 Inicio",
+            "📝 Registrar Expediente",
+            "📊 Consultar Expedientes",
+            "🔍 Buscar Expediente",
+            "📋 Mis Solicitudes",
+            "📈 Estadísticas",
+        ], key="nav_regional")
+
+    st.markdown("---")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        cerrar_sesion()
+
+
+# ============================================================
+# HEADER DINÁMICO
+# ============================================================
+
+def mostrar_header(titulo, subtitulo=""):
+    st.markdown(f"""
+    <div class='main-header'>
+        <h1>{titulo}</h1>
+        <p>{subtitulo}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============================================================
+# PÁGINA: INICIO
+# ============================================================
+
+if menu == "🏠 Inicio":
+    mostrar_header("📋 Expedientes UNEM", "UNEM — Período 2026-II")
+
+    stats = obtener_estadisticas()
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("👨‍🎓 Estudiantes", total_est)
+        st.markdown(f"<div class='stat-card'><h2>{stats['total']:,}</h2><p>Total Registros</p></div>", unsafe_allow_html=True)
     with col2:
-        st.metric("🏛️ Estados con Sedes", total_estados)
+        ingresos = stats['por_tipo_expediente'].get('INGRESO', 0)
+        st.markdown(f"<div class='stat-card stat-green'><h2>{ingresos:,}</h2><p>Ingresos</p></div>", unsafe_allow_html=True)
     with col3:
-        st.metric("📚 Programas", total_programas)
+        prosecucion = stats['por_tipo_expediente'].get('PROSECUCION', 0)
+        st.markdown(f"<div class='stat-card stat-orange'><h2>{prosecucion:,}</h2><p>Prosecución</p></div>", unsafe_allow_html=True)
     with col4:
-        st.metric("📄 Certificaciones Emitidas", total_cert)
-    
-    col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        st.metric("👥 Usuarios Activos", total_users)
-    with col6:
-        st.metric("🏫 Almacenes/Sedes", total_alm)
-    with col7:
-        st.metric("📝 Notas Registradas", total_notas)
-    with col8:
-        st.metric("🖥️ Etapa", "2")
-    
+        egresados = stats['por_tipo_expediente'].get('EGRESADO', 0)
+        st.markdown(f"<div class='stat-card stat-red'><h2>{egresados:,}</h2><p>Egresados</p></div>", unsafe_allow_html=True)
+
     st.markdown("---")
-    st.subheader("📈 Distribución por Programa")
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT programa, COUNT(*) as cnt FROM estudiantes GROUP BY programa ORDER BY cnt DESC")
-    prog_data = c.fetchall()
-    conn.close()
-    
-    if prog_data:
-        df_prog = pd.DataFrame(prog_data, columns=["Programa", "Cantidad"])
-        st.dataframe(df_prog, use_container_width=True, hide_index=True)
-    else:
-        st.info("No hay estudiantes registrados aún.")
 
-# ============================================================
-# FLUJO PRINCIPAL DE NAVEGACIÓN
-# ============================================================
-
-# (Bloque main() eliminado — el flujo principal está al final del archivo)
-# ============================================================
-# PÁGINA: REGISTRAR ESTUDIANTE
-# ============================================================
-
-def pagina_registrar_estudiante():
-    st.title("📝 Registrar Estudiante")
-    st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["nombre"]
-    
-    # ---- CAMPOS FUERA DEL FORM (cascada dinámica) ----
-    # Los dropdowns que dependen de otros deben estar FUERA del st.form
-    # para que se actualicen inmediatamente al cambiar la selección.
-    
-    st.subheader("📍 Ubicación y Programa")
-    
-    # --- Cascada Estado → Municipio → Aula Taller ---
-    col_estado, col_municipio = st.columns(2)
-    
-    def reset_municipio_reg():
-        """Callback: al cambiar el estado, resetea municipio y aula"""
-        st.session_state.pop("reg_municipio_widget", None)
-        st.session_state.pop("reg_aula_widget", None)
-    
-    with col_estado:
-        lista_estados = list(ESTADOS_MUNICIPIOS.keys())
-        estado_sel = st.selectbox(
-            "Estado *",
-            options=lista_estados,
-            index=lista_estados.index(st.session_state.get("reg_estado", lista_estados[0])) if st.session_state.get("reg_estado") in lista_estados else 0,
-            key="reg_estado_widget",
-            on_change=reset_municipio_reg
-        )
-        st.session_state["reg_estado"] = estado_sel
-    
-    with col_municipio:
-        municipios = ESTADOS_MUNICIPIOS.get(estado_sel, [])
-        mun_default = st.session_state.get("reg_municipio_widget")
-        mun_index = municipios.index(mun_default) if mun_default in municipios else 0
-        municipio_sel = st.selectbox(
-            "Municipio *",
-            options=municipios,
-            index=mun_index,
-            key="reg_municipio_widget"
-        )
-        st.session_state["reg_municipio"] = municipio_sel
-    
-    # Aula Taller (cargar de almacenes)
-    almacenes_lista = obtener_almacenes()
-    aulas_disponibles = [f"{a[1]} ({a[2]}/{a[3]}/{a[4]})" for a in almacenes_lista if a[2] == estado_sel and a[3] == municipio_sel]
-    if not aulas_disponibles:
-        aulas_disponibles = ["No hay aulas disponibles - cree un almacén primero"]
-    aula_default = st.session_state.get("reg_aula_widget")
-    aula_index = aulas_disponibles.index(aula_default) if aula_default in aulas_disponibles else 0
-    aula_sel = st.selectbox("Aula Taller *", options=aulas_disponibles, index=aula_index, key="reg_aula_widget")
-    st.session_state["reg_aula"] = aula_sel
-    
-    # --- Cascada Tipo de Programa → Programa ---
-    col_tipo, col_prog = st.columns(2)
-    
-    with col_tipo:
-        tipo_prog_sel = st.selectbox(
-            "Tipo de Programa *",
-            options=TIPOS_PROGRAMA,
-            key="reg_tipo_programa_widget"
-        )
-        if st.session_state.get("reg_tipo_programa") != tipo_prog_sel:
-            st.session_state["reg_tipo_programa"] = tipo_prog_sel
-            st.session_state.pop("reg_programa", None)  # Reset programa
-    
-    with col_prog:
-        programas = obtener_programas(tipo_prog_sel)
-        prog_default = st.session_state.get("reg_programa")
-        prog_index = programas.index(prog_default) if prog_default in programas else 0
-        programa_sel = st.selectbox(
-            "Programa *",
-            options=programas,
-            index=prog_index,
-            key="reg_programa_widget"
-        )
-        st.session_state["reg_programa"] = programa_sel
-    
-    st.markdown("---")
-    st.subheader("👤 Datos Personales")
-    
-    # ---- FORMULARIO (campos que no dependen de otros) ----
-    with st.form("form_registrar_estudiante"):
-        col_ced, col_sexo = st.columns(2)
-        with col_ced:
-            cedula = st.text_input("Cédula de Identidad *", placeholder="Ej: V-12.345.678")
-        with col_sexo:
-            sexo = st.selectbox("Sexo *", options=["M", "F"], format_func=lambda x: "Masculino" if x == "M" else "Femenino")
-        
-        apellidos = st.text_input("Apellidos *", placeholder="Apellidos del estudiante")
-        nombres = st.text_input("Nombres *", placeholder="Nombres del estudiante")
-        
-        col_fnac, col_lnac = st.columns(2)
-        with col_fnac:
-            fecha_nacimiento = st.date_input("Fecha de Nacimiento", value=None)
-        with col_lnac:
-            lugar_nacimiento = st.text_input("Lugar de Nacimiento", placeholder="Ciudad, Estado")
-        
-        col_nivel, col_ingreso = st.columns(2)
-        with col_nivel:
-            # Nivel académico según tipo de programa
-            if tipo_prog_sel == "PNF":
-                nivel_opciones = NIVELES_ACADEMICOS  # ["BACHILLER", "TSU"]
-            else:
-                nivel_opciones = [NIVELES_PNFA.get(tipo_prog_sel, "ESPECIALISTA")]
-            nivel_academico = st.selectbox("Nivel Académico *", options=nivel_opciones)
-        with col_ingreso:
-            tipo_ingreso = st.selectbox("Tipo de Ingreso *", options=TIPOS_INGRESO)
-        
-        # --- Campos condicionales PNFA ---
-        cedula_especializacion = ""
-        cedula_maestria = ""
-        procedencia = ""
-        
-        if tipo_prog_sel == "PNFA_E":
-            st.markdown("**📋 Requisito PNFA Especialización:**")
-            procedencia = st.selectbox(
-                "Proviene de PNF previo en UNEM o de otra institución",
-                options=["PNF en UNEM", "Otra Institución"]
-            )
-            cedula_especializacion = st.text_input(
-                "Cédula del Programa PNF de Origen (si aplica)",
-                placeholder="Cédula del expediente PNF"
-            )
-        
-        elif tipo_prog_sel == "PNFA_M":
-            st.markdown("**📋 Requisito PNFA Maestría:** Se requiere Especialización registrada")
-            cedula_especializacion = st.text_input(
-                "Cédula de Especialización *",
-                placeholder="Cédula del expediente de Especialización"
-            )
-        
-        elif tipo_prog_sel == "PNFA_D":
-            st.markdown("**📋 Requisito PNFA Doctorado:** Se requieren Especialización Y Maestría registradas")
-            cedula_especializacion = st.text_input(
-                "Cédula de Especialización *",
-                placeholder="Cédula del expediente de Especialización"
-            )
-            cedula_maestria = st.text_input(
-                "Cédula de Maestría *",
-                placeholder="Cédula del expediente de Maestría"
-            )
-        
-        # PDF de respaldo (opcional)
-        pdf_file = st.file_uploader("📄 Documento PDF de respaldo (opcional, máx 5MB)", type=["pdf"])
-        
-        submitted = st.form_submit_button("✅ Registrar Estudiante", use_container_width=True)
-        
-        if submitted:
-            # Validaciones
-            errores = []
-            if not cedula:
-                errores.append("Cédula es obligatoria")
-            if not apellidos:
-                errores.append("Apellidos son obligatorios")
-            if not nombres:
-                errores.append("Nombres son obligatorios")
-            if "No hay aulas" in aula_sel:
-                errores.append("Debe existir un almacén/aula para esta ubicación")
-            
-            # Validar prerrequisitos PNFA
-            if tipo_prog_sel == "PNFA_M" and not cedula_especializacion:
-                errores.append("Se requiere cédula de Especialización para Maestría")
-            if tipo_prog_sel == "PNFA_D":
-                if not cedula_especializacion:
-                    errores.append("Se requiere cédula de Especialización para Doctorado")
-                if not cedula_maestria:
-                    errores.append("Se requiere cédula de Maestría para Doctorado")
-            
-            # Verificar prerrequisitos en BD
-            if tipo_prog_sel == "PNFA_M" and cedula_especializacion:
-                est_esp = buscar_estudiante(cedula_especializacion)
-                if not est_esp:
-                    errores.append(f"No se encontró expediente de Especialización con cédula {cedula_especializacion}")
-                elif est_esp[10] != "PNFA_E":  # tipo_programa
-                    errores.append(f"La cédula {cedula_especializacion} no corresponde a una Especialización")
-            
-            if tipo_prog_sel == "PNFA_D":
-                if cedula_especializacion:
-                    est_esp = buscar_estudiante(cedula_especializacion)
-                    if not est_esp:
-                        errores.append(f"No se encontró expediente de Especialización con cédula {cedula_especializacion}")
-                if cedula_maestria:
-                    est_maest = buscar_estudiante(cedula_maestria)
-                    if not est_maest:
-                        errores.append(f"No se encontró expediente de Maestría con cédula {cedula_maestria}")
-                    elif est_maest[10] != "PNFA_M":
-                        errores.append(f"La cédula {cedula_maestria} no corresponde a una Maestría")
-            
-            if errores:
-                for err in errores:
-                    st.error(f"❌ {err}")
-            else:
-                # Calcular titularidad por género
-                titularidad = calcular_titularidad(tipo_prog_sel, sexo)
-                
-                # Extraer nombre del aula del texto completo
-                aula_nombre = aula_sel.split(" (")[0] if " (" in aula_sel else aula_sel
-                
-                # Procesar PDF si se subió
-                pdf_path = ""
-                if pdf_file:
-                    if pdf_file.size > MAX_PDF_SIZE:
-                        st.error("❌ El archivo PDF excede el tamaño máximo de 5MB.")
-                        return
-                    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', pdf_file.name)
-                    pdf_path = os.path.join(UPLOAD_FOLDER, f"{cedula}_{safe_name}")
-                    with open(pdf_path, "wb") as f:
-                        f.write(pdf_file.getbuffer())
-                
-                datos = {
-                    "cedula": cedula,
-                    "apellidos": apellidos.upper(),
-                    "nombres": nombres.upper(),
-                    "sexo": sexo,
-                    "fecha_nacimiento": str(fecha_nacimiento) if fecha_nacimiento else "",
-                    "lugar_nacimiento": lugar_nacimiento.upper() if lugar_nacimiento else "",
-                    "estado": estado_sel,
-                    "municipio": municipio_sel,
-                    "aula_taller": aula_nombre,
-                    "tipo_programa": tipo_prog_sel,
-                    "programa": programa_sel,
-                    "nivel_academico": nivel_academico,
-                    "tipo_ingreso": tipo_ingreso,
-                    "registrado_por": usuario,
-                    "titularidad": titularidad,
-                    "procedencia_especializacion": procedencia,
-                    "cedula_especializacion": cedula_especializacion,
-                    "cedula_maestria": cedula_maestria,
-                    "pdf_path": pdf_path,
-                }
-                
-                ok, est_id = registrar_estudiante(datos)
-                if ok:
-                    st.success(f"✅ Estudiante registrado exitosamente. ID: {est_id}")
-                    if titularidad:
-                        st.info(f"🎓 Titularidad asignada: **{titularidad}** (según sexo: {'Masculino' if sexo == 'M' else 'Femenino'})")
-                    # Limpiar session_state de registro
-                    for key in ["reg_estado", "reg_municipio", "reg_tipo_programa", "reg_programa"]:
-                        st.session_state.pop(key, None)
-                else:
-                    st.error("❌ Error al registrar. Posible cédula duplicada.")
-
-
-
-
-# ============================================================
-# PÁGINA: CONSULTAR EXPEDIENTE
-# ============================================================
-
-def pagina_consultar_expediente():
-    st.title("🔍 Consultar Expediente")
-    st.markdown("---")
-    
-    cedula_buscar = st.text_input("Ingrese la Cédula del Estudiante", placeholder="Ej: V-12.345.678")
-    
-    if st.button("🔍 Buscar", type="primary"):
-        if not cedula_buscar:
-            st.warning("⚠️ Ingrese una cédula para buscar.")
-            return
-        
-        est = buscar_estudiante(cedula_buscar)
-        if est:
-            est_id = est[0]
-            titularidad = est[15] if len(est) > 15 else ""
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.subheader(f"📋 Expediente de {est[3]} {est[2]}")
-                
-                datos_mostrar = [
-                    ("Cédula", est[1]),
-                    ("Sexo", "Masculino" if est[4] == "M" else "Femenino"),
-                    ("Fecha de Nacimiento", est[5]),
-                    ("Lugar de Nacimiento", est[6]),
-                    ("Estado", est[7]),
-                    ("Municipio", est[8]),
-                    ("Aula Taller", est[9]),
-                    ("Tipo de Programa", est[10]),
-                    ("Programa", est[11]),
-                    ("Nivel Académico", est[12]),
-                    ("Tipo de Ingreso", est[13]),
-                    ("Fecha de Registro", est[14]),
-                ]
-                if titularidad:
-                    datos_mostrar.insert(0, ("Titularidad", titularidad))
-                
-                for label, value in datos_mostrar:
-                    if value:
-                        st.markdown(f"**{label}:** {value}")
-            
-            with col2:
-                st.subheader("📊 Notas Registradas")
-                notas = obtener_notas_estudiante(est_id)
-                if notas:
-                    df_notas = pd.DataFrame(notas, columns=["ID", "Unidad Curricular", "Calificación", "En Letras", "Créditos", "Semestre", "Fecha"])
-                    # Mostrar según nivel
-                    tipo_prog = est[10]
-                    nivel = est[12]
-                    
-                    if tipo_prog == "PNF" and nivel == "TSU":
-                        # TSU: solo Tercer Trayecto+
-                        df_notas = df_notas[df_notas["Semestre"].str.contains("Tercer|Cuarto", na=False)]
-                    
-                    st.dataframe(df_notas[["Unidad Curricular", "Calificación", "En Letras", "Créditos", "Semestre"]], 
-                                use_container_width=True, hide_index=True)
-                else:
-                    st.info("No hay notas registradas para este estudiante.")
+    col_r1, col_r2 = st.columns(2)
+    with col_r1:
+        st.subheader("🏛️ Registros por Estado")
+        if stats['por_estado']:
+            df_est = pd.DataFrame(list(stats['por_estado'].items()), columns=["Estado", "Cantidad"])
+            df_est = df_est.sort_values("Cantidad", ascending=False)
+            st.dataframe(df_est, use_container_width=True, hide_index=True)
         else:
-            st.error("❌ No se encontró expediente con esa cédula.")
+            st.info("No hay registros aún.")
 
+    with col_r2:
+        st.subheader("📚 Registros por Tipo de Programa")
+        if stats['por_tipo_programa']:
+            df_tp = pd.DataFrame(list(stats['por_tipo_programa'].items()), columns=["Tipo Programa", "Cantidad"])
+            df_tp = df_tp.sort_values("Cantidad", ascending=False)
+            st.dataframe(df_tp, use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay registros aún.")
+
+
+# ============================================================
+# PÁGINA: REGISTRAR EXPEDIENTE
+# ============================================================
+
+elif menu == "📝 Registrar Expediente":
+    mostrar_header("📝 Registrar Nuevo Expediente", "Complete todos los campos obligatorios")
+
+    def obtener_programas_para_tipo(tipo):
+        """Obtiene programas de la BD primero, con fallback al dict estático"""
+        programas_db = obtener_lista_editable("programa", tipo)
+        if programas_db:
+            return programas_db
+        return TIPOS_PROGRAMA_PROGRAMAS.get(tipo, [])
+
+    def on_estado_change():
+        st.session_state.reg_municipio = None
+        st.session_state.reg_aula_taller = None
+
+    def on_tipo_programa_change():
+        st.session_state.reg_programa = None
+
+    def on_municipio_change():
+        st.session_state.reg_aula_taller = None
+
+    # Limpieza segura tras un registro exitoso: se hace ANTES de crear los widgets
+    if st.session_state.get("_limpiar_registro"):
+        for _k in ("reg_estado", "reg_municipio", "reg_tipo_programa",
+                   "reg_programa", "reg_aula_taller", "reg_tipo_expediente"):
+            st.session_state.pop(_k, None)
+        st.session_state._limpiar_registro = False
+
+    if "reg_estado" not in st.session_state:
+        st.session_state.reg_estado = None
+    if "reg_municipio" not in st.session_state:
+        st.session_state.reg_municipio = None
+    if "reg_tipo_programa" not in st.session_state:
+        st.session_state.reg_tipo_programa = None
+    if "reg_programa" not in st.session_state:
+        st.session_state.reg_programa = None
+    if "reg_aula_taller" not in st.session_state:
+        st.session_state.reg_aula_taller = None
+    if "reg_tipo_expediente" not in st.session_state:
+        st.session_state.reg_tipo_expediente = None
+
+    st.markdown("#### 📍 Ubicación y Programa")
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        estados_lista = ["— Seleccione —"] + list(ESTADOS_MUNICIPIOS.keys())
+        estado_sel_idx = 0
+        if st.session_state.reg_estado and st.session_state.reg_estado in ESTADOS_MUNICIPIOS:
+            estado_sel_idx = estados_lista.index(st.session_state.reg_estado)
+        estado = st.selectbox(
+            "🏛️ ESTADO *",
+            estados_lista,
+            index=estado_sel_idx,
+            key="reg_estado",
+            on_change=on_estado_change
+        )
+        estado_real = estado if estado != "— Seleccione —" else None
+
+        if estado_real:
+            municipios_disponibles = ["— Seleccione —"] + ESTADOS_MUNICIPIOS.get(estado_real, [])
+        else:
+            municipios_disponibles = ["— Primero seleccione un estado —"]
+
+        municipio_sel_idx = 0
+        if st.session_state.reg_municipio and estado_real:
+            muni_list = ESTADOS_MUNICIPIOS.get(estado_real, [])
+            if st.session_state.reg_municipio in muni_list:
+                municipio_sel_idx = municipios_disponibles.index(st.session_state.reg_municipio)
+        municipio = st.selectbox(
+            "🏙️ MUNICIPIO *",
+            municipios_disponibles,
+            index=municipio_sel_idx,
+            key="reg_municipio",
+            on_change=on_municipio_change
+        )
+        municipio_real = municipio if municipio not in ["— Seleccione —", "— Primero seleccione un estado —"] else None
+
+        if municipio_real:
+            aulas_disponibles = obtener_lista_editable("aula_taller", municipio_real)
+            if aulas_disponibles:
+                aulas_lista = ["— Seleccione —"] + aulas_disponibles
+                aula_sel_idx = 0
+                if st.session_state.reg_aula_taller and st.session_state.reg_aula_taller in aulas_disponibles:
+                    aula_sel_idx = aulas_lista.index(st.session_state.reg_aula_taller)
+                aula_taller = st.selectbox(
+                    "🏫 AULA TALLER",
+                    aulas_lista,
+                    index=aula_sel_idx,
+                    key="reg_aula_taller"
+                )
+                aula_taller_real = aula_taller if aula_taller != "— Seleccione —" else ""
+            else:
+                aula_taller_real = st.text_input(
+                    "🏫 AULA TALLER",
+                    placeholder="Ej: Aula 01 (No hay aulas registradas para este municipio)",
+                    key="reg_aula_taller_text"
+                )
+        else:
+            aula_taller_real = ""
+
+    with col_b:
+        tipos_lista = ["— Seleccione —"] + list(TIPOS_PROGRAMA_PROGRAMAS.keys())
+        tipo_sel_idx = 0
+        if st.session_state.reg_tipo_programa and st.session_state.reg_tipo_programa in TIPOS_PROGRAMA_PROGRAMAS:
+            tipo_sel_idx = tipos_lista.index(st.session_state.reg_tipo_programa)
+        tipo_programa = st.selectbox(
+            "📚 TIPO DE PROGRAMA *",
+            tipos_lista,
+            index=tipo_sel_idx,
+            key="reg_tipo_programa",
+            on_change=on_tipo_programa_change
+        )
+        tipo_real = tipo_programa if tipo_programa != "— Seleccione —" else None
+
+        if tipo_real:
+            programas_disponibles = obtener_programas_para_tipo(tipo_real)
+            programas_lista = ["— Seleccione —"] + programas_disponibles
+        else:
+            programas_lista = ["— Primero seleccione tipo de programa —"]
+
+        prog_sel_idx = 0
+        if st.session_state.reg_programa and tipo_real:
+            progs = obtener_programas_para_tipo(tipo_real)
+            if st.session_state.reg_programa in progs:
+                prog_sel_idx = programas_lista.index(st.session_state.reg_programa)
+        programa = st.selectbox(
+            "🎓 PROGRAMA *",
+            programas_lista,
+            index=prog_sel_idx,
+            key="reg_programa"
+        )
+        programa_real = programa if programa not in ["— Seleccione —", "— Primero seleccione tipo de programa —"] else None
+
+    tipo_exp_lista = ["— Seleccione —"] + TIPOS_EXPEDIENTE
+    tipo_exp_idx = 0
+    if st.session_state.reg_tipo_expediente and st.session_state.reg_tipo_expediente in TIPOS_EXPEDIENTE:
+        tipo_exp_idx = tipo_exp_lista.index(st.session_state.reg_tipo_expediente)
+    tipo_expediente = st.selectbox(
+        "📂 TIPO DE EXPEDIENTE *",
+        tipo_exp_lista,
+        index=tipo_exp_idx,
+        key="reg_tipo_expediente"
+    )
+    tipo_exp_real = tipo_expediente if tipo_expediente != "— Seleccione —" else None
+
+    st.markdown("---")
+    st.markdown("#### 👤 Datos del Titular")
+
+    with st.form("form_registro", clear_on_submit=True):
+        col_c, col_d = st.columns(2)
+
+        with col_c:
+            nombres = st.text_input("👤 NOMBRES *", placeholder="Ej: María José")
+            apellidos = st.text_input("👤 APELLIDOS *", placeholder="Ej: Pérez González")
+            cedula = st.text_input("🪪 CÉDULA DE IDENTIDAD *", placeholder="Ej: V-12345678")
+
+        with col_d:
+            correo_titular = st.text_input("📧 CORREO ELECTRÓNICO DEL TITULAR", placeholder="correo@ejemplo.com (opcional)")
+            sexo_sel = st.selectbox("⚧ SEXO / GÉNERO *", ["— Seleccione —", "FEMENINO", "MASCULINO"],
+                                    help="Se usa para redactar el título (LICENCIADA/LICENCIADO, DOCTORA/DOCTOR, etc.)")
+            periodo_culminacion = st.text_input("📅 PERÍODO DE CULMINACIÓN", placeholder="Ej: 2024-II (para egresados / certificación)")
+            observaciones = st.text_area("💬 OBSERVACIONES", placeholder="Observaciones adicionales...", height=120)
+
+        pdf_file = st.file_uploader("📄 EXPEDIENTE DIGITAL (PDF) - Máximo 5MB *",
+                                    type=["pdf"],
+                                    help="Solo archivos PDF, máximo 5 Megabytes")
+
+        submitted = st.form_submit_button("✅ REGISTRAR EXPEDIENTE", use_container_width=True, type="primary")
+
+        if submitted:
+            errores = []
+            if not estado_real: errores.append("ESTADO")
+            if not municipio_real: errores.append("MUNICIPIO")
+            if not nombres.strip(): errores.append("NOMBRES")
+            if not apellidos.strip(): errores.append("APELLIDOS")
+            if not cedula.strip(): errores.append("CÉDULA")
+            if not tipo_real: errores.append("TIPO DE PROGRAMA")
+            if not programa_real: errores.append("PROGRAMA")
+            if not tipo_exp_real: errores.append("TIPO DE EXPEDIENTE")
+            if sexo_sel == "— Seleccione —": errores.append("SEXO / GÉNERO")
+            if not pdf_file: errores.append("PDF DEL EXPEDIENTE")
+
+            if pdf_file and pdf_file.size > MAX_PDF_SIZE:
+                st.error(f"❌ El archivo PDF pesa **{pdf_file.size / (1024*1024):.1f}MB**. El máximo permitido es **5MB**.")
+                errores.append("PDF excede 5MB")
+
+            if errores:
+                st.error(f"⚠️ Campos obligatorios faltantes: **{', '.join(errores)}**")
+            else:
+                datos = {
+                    "estado": estado_real,
+                    "municipio": municipio_real,
+                    "aula_taller": aula_taller_real,
+                    "nombres": nombres.strip().upper(),
+                    "apellidos": apellidos.strip().upper(),
+                    "cedula": cedula.strip().upper(),
+                    "correo_titular": correo_titular.strip().lower(),
+                    "tipo_programa": tipo_real,
+                    "programa": programa_real,
+                    "tipo_expediente": tipo_exp_real,
+                    "periodo_culminacion": periodo_culminacion.strip().upper(),
+                    "sexo": ("" if sexo_sel == "— Seleccione —" else sexo_sel),
+                    "observaciones": observaciones.strip(),
+                    "registrado_por": st.session_state.usuario,
+                }
+
+                exito, mensaje = registrar_expediente(datos, pdf_file.read())
+
+                if exito:
+                    st.markdown("""
+                    <div class='success-box'>
+                        <strong>✅ ¡REGISTRO EXITOSO!</strong><br>
+                        El expediente ha sido registrado correctamente en el sistema.<br>
+                        Se enviará notificación por correo al titular.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if correo_titular.strip():
+                        datos_correo = {k: v for k, v in datos.items()}
+                        conn2 = sqlite3.connect(DB_FILE)
+                        c2 = conn2.cursor()
+                        c2.execute("SELECT pdf_path FROM expedientes WHERE cedula=? ORDER BY id DESC LIMIT 1", (datos['cedula'],))
+                        row_pdf = c2.fetchone()
+                        conn2.close()
+                        pdf_path_real = row_pdf[0] if row_pdf and row_pdf[0] else None
+                        correo_ok, correo_msg = enviar_correo_registro(
+                            correo_titular.strip(), datos_correo, pdf_path_real
+                        )
+                        if correo_ok:
+                            st.success(f"📧 {correo_msg}")
+                        else:
+                            st.warning(f"📧 Correo no enviado: {correo_msg}")
+
+                    # Marcamos para limpiar los campos en el próximo dibujado
+                    # (nunca reasignar aquí las claves de widgets ya creados)
+                    st.session_state._limpiar_registro = True
+                    time.sleep(1.2)
+                    st.rerun()
+                else:
+                    st.error(f"❌ Error: {mensaje}")
+
+# ============================================================
+# PÁGINA: CONSULTAR EXPEDIENTES
+# ============================================================
+
+elif menu == "📊 Consultar Expedientes":
+    mostrar_header("📊 Consultar Expedientes", "Filtre y consulte los registros del sistema")
+
+    st.subheader("🔍 Filtros de Búsqueda")
+
+    def on_filtro_estado_change():
+        st.session_state.filtro_municipio = []
+
+    def on_filtro_tipo_prog_change():
+        st.session_state.filtro_programa = []
+
+    if "filtro_estado" not in st.session_state:
+        st.session_state.filtro_estado = []
+    if "filtro_municipio" not in st.session_state:
+        st.session_state.filtro_municipio = []
+    if "filtro_tipo_prog" not in st.session_state:
+        st.session_state.filtro_tipo_prog = []
+    if "filtro_programa" not in st.session_state:
+        st.session_state.filtro_programa = []
+
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filtro_estado = st.multiselect("Estado", list(ESTADOS_MUNICIPIOS.keys()),
+                                       key="filtro_estado",
+                                       on_change=on_filtro_estado_change)
+        municipios_disponibles = []
+        for est in filtro_estado:
+            municipios_disponibles.extend(ESTADOS_MUNICIPIOS.get(est, []))
+        municipios_disponibles = sorted(set(municipios_disponibles))
+        filtro_municipio = st.multiselect("Municipio", municipios_disponibles,
+                                          key="filtro_municipio")
+
+    with col_f2:
+        filtro_tipo_exp = st.multiselect("Tipo Expediente", TIPOS_EXPEDIENTE, key="filtro_tipo_exp")
+        filtro_tipo_prog = st.multiselect("Tipo Programa", list(TIPOS_PROGRAMA_PROGRAMAS.keys()),
+                                           key="filtro_tipo_prog",
+                                           on_change=on_filtro_tipo_prog_change)
+        programas_disponibles = []
+        for tp in filtro_tipo_prog:
+            programas_disponibles.extend(obtener_lista_editable("programa", tp) or TIPOS_PROGRAMA_PROGRAMAS.get(tp, []))
+        programas_disponibles = sorted(set(programas_disponibles))
+        filtro_programa = st.multiselect("Programa", programas_disponibles,
+                                         key="filtro_programa")
+
+    filtros = {}
+    if filtro_estado: filtros["estado"] = filtro_estado[0] if len(filtro_estado) == 1 else None
+    if filtro_municipio: filtros["municipio"] = filtro_municipio[0] if len(filtro_municipio) == 1 else None
+    if filtro_tipo_exp: filtros["tipo_expediente"] = filtro_tipo_exp[0] if len(filtro_tipo_exp) == 1 else None
+    if filtro_tipo_prog: filtros["tipo_programa"] = filtro_tipo_prog[0] if len(filtro_tipo_prog) == 1 else None
+    if filtro_programa: filtros["programa"] = filtro_programa[0] if len(filtro_programa) == 1 else None
+
+    df = obtener_expedientes(filtros if any(filtros.values()) else None)
+
+    if not df.empty:
+        columnas_mostrar = {
+            "id": "#", "estado": "ESTADO", "municipio": "MUNICIPIO",
+            "aula_taller": "AULA TALLER", "nombres": "NOMBRES", "apellidos": "APELLIDOS",
+            "cedula": "CÉDULA", "correo_titular": "CORREO",
+            "tipo_programa": "TIPO PROGRAMA", "programa": "PROGRAMA",
+            "tipo_expediente": "TIPO EXPEDIENTE",
+            "observaciones": "OBSERVACIONES",
+            "registrado_por": "REGISTRADO POR",
+            "fecha_registro": "FECHA REGISTRO"
+        }
+        df_show = df.rename(columns=columnas_mostrar)
+        cols_visibles = ["#", "ESTADO", "MUNICIPIO", "AULA TALLER", "NOMBRES", "APELLIDOS",
+                         "CÉDULA", "CORREO", "TIPO PROGRAMA", "PROGRAMA",
+                         "TIPO EXPEDIENTE", "OBSERVACIONES", "REGISTRADO POR", "FECHA REGISTRO"]
+        cols_disponibles = [c for c in cols_visibles if c in df_show.columns]
+        st.dataframe(df_show[cols_disponibles], use_container_width=True, hide_index=True)
+        st.caption(f"Mostrando **{len(df)}** registros")
+    else:
+        st.info("📋 No se encontraron expedientes con los filtros seleccionados.")
+
+# ============================================================
+# PÁGINA: BUSCAR EXPEDIENTE
+# ============================================================
+
+elif menu == "🔍 Buscar Expediente":
+    mostrar_header("🔍 Buscar Expediente", "Búsqueda rápida por cédula de identidad")
+
+    buscar = st.text_input("🪪 Ingrese la Cédula de Identidad", placeholder="Ej: V-12345678")
+
+    if buscar:
+        df = obtener_expedientes({"cedula": buscar.strip().upper()})
+        if not df.empty:
+            st.success("✅ Expediente encontrado")
+            for _, row in df.iterrows():
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"🏛️ **Estado:** {row['estado']}")
+                    st.info(f"🏙️ **Municipio:** {row['municipio']}")
+                    st.info(f"🏫 **Aula Taller:** {row['aula_taller']}")
+                    st.info(f"👤 **Nombres:** {row['nombres']}")
+                    st.info(f"👤 **Apellidos:** {row.get('apellidos', '')}")
+                    st.info(f"🪪 **Cédula:** {row['cedula']}")
+                    st.info(f"📧 **Correo:** {row['correo_titular']}")
+                with col2:
+                    st.info(f"📚 **Tipo Programa:** {row['tipo_programa']}")
+                    st.info(f"🎓 **Programa:** {row['programa']}")
+                    st.info(f"📂 **Tipo Expediente:** {row['tipo_expediente']}")
+                    st.info(f"💬 **Observaciones:** {row['observaciones']}")
+                    st.info(f"👤 **Registrado por:** {row['registrado_por']}")
+                    st.info(f"📅 **Fecha:** {row['fecha_registro']}")
+
+                col_desc1, col_desc2 = st.columns(2)
+                with col_desc1:
+                    if row['pdf_path'] and os.path.exists(row['pdf_path']):
+                        with open(row['pdf_path'], "rb") as f:
+                            st.download_button(
+                                label="📄 Descargar PDF del Expediente",
+                                data=f.read(),
+                                file_name=f"Expediente_{row['cedula']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"pdf_{row['id']}"
+                            )
+                with col_desc2:
+                    # Etiqueta para pegar en la carpeta (todos los datos menos el PDF)
+                    try:
+                        etiqueta_bytes = generar_etiqueta_pdf(row)
+                        st.download_button(
+                            label="🏷️ Generar Etiqueta para la Carpeta",
+                            data=etiqueta_bytes,
+                            file_name=f"Etiqueta_{row['cedula']}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="primary",
+                            key=f"etq_{row['id']}"
+                        )
+                    except Exception as e:
+                        st.warning(f"⚠️ No se pudo generar la etiqueta: {e}")
+
+                # Solicitar modificación (solo REGIONAL)
+                if rol == "ADMIN_REGIONAL":
+                    st.markdown("---")
+                    st.subheader("📝 Solicitar Modificación")
+                    campo_mod = st.selectbox("Campo a modificar", [
+                        "Estado", "Municipio", "Aula Taller", "Nombres", "Apellidos",
+                        "Cédula", "Correo del Titular", "Tipo de Programa", "Programa",
+                        "Tipo de Expediente", "Observaciones"
+                    ], key=f"campo_{row['id']}")
+                    valor_nuevo = st.text_input("Nuevo valor", key=f"nuevo_{row['id']}")
+                    motivo = st.text_area("Motivo de la modificación", key=f"motivo_{row['id']}")
+                    if st.button("📤 Enviar Solicitud de Modificación", key=f"sol_{row['id']}"):
+                        if valor_nuevo.strip() and motivo.strip():
+                            campos_db_map = {
+                                "Estado": "estado", "Municipio": "municipio", "Aula Taller": "aula_taller",
+                                "Nombres": "nombres", "Apellidos": "apellidos", "Cédula": "cedula",
+                                "Correo del Titular": "correo_titular",
+                                "Tipo de Programa": "tipo_programa", "Programa": "programa",
+                                "Tipo de Expediente": "tipo_expediente", "Observaciones": "observaciones"
+                            }
+                            col_name = campos_db_map.get(campo_mod, '')
+                            valor_actual = str(row.get(col_name, '')) if col_name else ''
+                            crear_solicitud_modificacion(
+                                row['id'], st.session_state.usuario,
+                                campo_mod, valor_actual,
+                                valor_nuevo.strip(), motivo.strip()
+                            )
+                            st.success("✅ Solicitud enviada. Será revisada por un administrador.")
+                        else:
+                            st.warning("⚠️ Complete el nuevo valor y el motivo.")
+
+                    # Solicitar ELIMINACIÓN del expediente (solo REGIONAL)
+                    st.markdown("---")
+                    st.subheader("🗑️ Solicitar Eliminación del Expediente")
+                    st.warning("⚠️ La eliminación será revisada y ejecutada por un Administrador (Nivel 1 o 2).")
+                    motivo_elim = st.text_area("Motivo de la eliminación", key=f"motivo_elim_{row['id']}")
+                    if st.button("🗑️ Enviar Solicitud de Eliminación", key=f"sol_elim_{row['id']}"):
+                        if motivo_elim.strip():
+                            resumen = f"{row['cedula']} — {row['nombres']} {row.get('apellidos', '')}".strip()
+                            crear_solicitud_eliminacion(
+                                row['id'], st.session_state.usuario,
+                                resumen, motivo_elim.strip()
+                            )
+                            st.success("✅ Solicitud de eliminación enviada. Será revisada por un administrador.")
+                        else:
+                            st.warning("⚠️ Indique el motivo de la eliminación.")
+        else:
+            st.warning(f"⚠️ No se encontró expediente con cédula **{buscar}**")
+
+# ============================================================
+# PÁGINA: GENERAR DOCUMENTOS (Certificación en PDF)
+# ============================================================
+
+elif menu == "📄 Generar Documentos":
+    mostrar_header("📄 Generar Documentos", "Certificación de Calificaciones en PDF con escudo, firma, código QR y código de barras")
+
+    # Solo Nivel 1 (Principal) y Nivel 2 (Auxiliar) pueden imprimir/generar documentos.
+    # El Nivel 3 (Regional) NO está autorizado.
+    if rol not in ("ADMIN_PRINCIPAL", "ADMIN_AUXILIAR"):
+        st.error("🚫 Su nivel de usuario no está autorizado para imprimir o generar documentos. "
+                 "Esta función es exclusiva del Nivel 1 y Nivel 2.")
+        st.stop()
+
+    st.info("Busque por alumno, aula taller, municipio, estado o programa. "
+            "Puede generar la certificación de **un alumno** o de **todo el grupo filtrado** (un ZIP con todos los PDF).")
+
+    st.subheader("🔍 Filtros de búsqueda")
+    colg1, colg2 = st.columns(2)
+    with colg1:
+        gf_texto = st.text_input("👤 Alumno (nombre, apellido o cédula)", key="gen_texto")
+        gf_estado = st.multiselect("🏛️ Estado", list(ESTADOS_MUNICIPIOS.keys()), key="gen_estado")
+        gf_muni_disp = []
+        for est in gf_estado:
+            gf_muni_disp.extend(ESTADOS_MUNICIPIOS.get(est, []))
+        gf_muni_disp = sorted(set(gf_muni_disp))
+        gf_municipio = st.multiselect("🏙️ Municipio", gf_muni_disp, key="gen_municipio")
+    with colg2:
+        gf_aula = st.text_input("🏫 Aula taller (contiene)", key="gen_aula")
+        gf_tipo_prog = st.multiselect("📚 Tipo de programa", list(TIPOS_PROGRAMA_PROGRAMAS.keys()), key="gen_tipo_prog")
+        gf_prog_disp = []
+        for tp in gf_tipo_prog:
+            gf_prog_disp.extend(obtener_lista_editable("programa", tp) or TIPOS_PROGRAMA_PROGRAMAS.get(tp, []))
+        gf_prog_disp = sorted(set(gf_prog_disp))
+        gf_programa = st.multiselect("🎓 Programa", gf_prog_disp, key="gen_programa")
+        gf_tipo_exp = st.multiselect("📂 Tipo de expediente", TIPOS_EXPEDIENTE, key="gen_tipo_exp")
+
+    df_gen = obtener_expedientes(None)
+
+    if not df_gen.empty:
+        if gf_texto.strip():
+            t = gf_texto.strip().upper()
+            df_gen = df_gen[
+                df_gen["nombres"].fillna("").str.upper().str.contains(t) |
+                df_gen["apellidos"].fillna("").str.upper().str.contains(t) |
+                df_gen["cedula"].fillna("").str.upper().str.contains(t)
+            ]
+        if gf_estado:
+            df_gen = df_gen[df_gen["estado"].isin(gf_estado)]
+        if gf_municipio:
+            df_gen = df_gen[df_gen["municipio"].isin(gf_municipio)]
+        if gf_aula.strip():
+            df_gen = df_gen[df_gen["aula_taller"].fillna("").str.upper().str.contains(gf_aula.strip().upper())]
+        if gf_tipo_prog:
+            df_gen = df_gen[df_gen["tipo_programa"].isin(gf_tipo_prog)]
+        if gf_programa:
+            df_gen = df_gen[df_gen["programa"].isin(gf_programa)]
+        if gf_tipo_exp:
+            df_gen = df_gen[df_gen["tipo_expediente"].isin(gf_tipo_exp)]
+
+    st.markdown("---")
+    if df_gen.empty:
+        st.warning("⚠️ No hay expedientes que coincidan con los filtros.")
+    else:
+        st.success(f"✅ {len(df_gen)} expediente(s) encontrados.")
+        cols_prev = [c for c in ["cedula", "nombres", "apellidos", "estado", "municipio",
+                                  "aula_taller", "tipo_programa", "programa",
+                                  "periodo_culminacion", "tipo_expediente"] if c in df_gen.columns]
+        st.dataframe(df_gen[cols_prev], use_container_width=True, hide_index=True)
+
+        st.markdown("#### 📄 Generar la certificación de UN alumno")
+        opciones = {
+            f"{r['cedula']} — {r['nombres']} {r.get('apellidos','')}".strip(): idx
+            for idx, r in df_gen.iterrows()
+        }
+        sel = st.selectbox("Seleccione el alumno", list(opciones.keys()), key="gen_sel_alumno")
+        if sel:
+            row_sel = df_gen.loc[opciones[sel]]
+            try:
+                cert_bytes = generar_certificado_pdf(row_sel)
+                st.download_button(
+                    label="📄 Descargar Certificación (PDF)",
+                    data=cert_bytes,
+                    file_name=f"Certificacion_{row_sel['cedula']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                    key="gen_dl_uno",
+                )
+            except Exception as e:
+                st.error(f"❌ No se pudo generar la certificación: {e}")
+
+        st.markdown("#### 📦 Generar TODAS las certificaciones del grupo filtrado")
+        st.caption(f"Se generará un archivo ZIP con {len(df_gen)} certificaciones en PDF.")
+        if st.button("📦 Generar ZIP con todas las certificaciones", use_container_width=True, key="gen_zip_btn"):
+            try:
+                zip_buffer = BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for _, r in df_gen.iterrows():
+                        pdf_bytes = generar_certificado_pdf(r)
+                        nombre_arch = f"Certificacion_{r['cedula']}.pdf".replace("/", "-")
+                        zf.writestr(nombre_arch, pdf_bytes)
+                zip_buffer.seek(0)
+                st.download_button(
+                    label="⬇️ Descargar ZIP de certificaciones",
+                    data=zip_buffer.getvalue(),
+                    file_name="Certificaciones_UNEM.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    type="primary",
+                    key="gen_dl_zip",
+                )
+                st.success("✅ ZIP generado. Haga clic en el botón para descargarlo.")
+            except Exception as e:
+                st.error(f"❌ No se pudo generar el ZIP: {e}")
+
+# ============================================================
+# PÁGINA: MALLAS CURRICULARES
+# ============================================================
+
+elif menu == "🧮 Mallas Curriculares":
+    mostrar_header("🧮 Mallas Curriculares", "Cargue las materias (asignaturas) de cada programa, con sus Unidades de Crédito")
+
+    if rol not in ("ADMIN_PRINCIPAL", "ADMIN_AUXILIAR"):
+        st.error("🚫 Su nivel de usuario no está autorizado para esta sección.")
+        st.stop()
+
+    st.info("Elija un programa y cargue sus materias en orden (Trayecto/Semestre/Trimestre). "
+            "Marque **Introductorio** en las materias del curso introductorio: se guardan pero "
+            "**no** aparecen en la Certificación de Calificaciones. Las Unidades de Crédito (U.C.) "
+            "que escriba aquí saldrán automáticamente al costado de cada materia en el PDF.")
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        tp_malla = st.selectbox("📚 Tipo de programa", list(TIPOS_PROGRAMA_PROGRAMAS.keys()), key="malla_tipo")
+    with col_m2:
+        progs_m = obtener_lista_editable("programa", tp_malla) or TIPOS_PROGRAMA_PROGRAMAS.get(tp_malla, [])
+        prog_malla = st.selectbox("🎓 Programa", progs_m, key="malla_prog")
+
+    st.markdown("---")
+    st.subheader(f"📖 Materias de: {prog_malla}")
+
+    malla_actual = obtener_malla(prog_malla, incluir_introductorio=True)
+    if malla_actual:
+        df_malla = pd.DataFrame([{
+            "Período (Trayecto/Semestre)": m["periodo"],
+            "Materia": m["materia"],
+            "U.C. (créditos)": m["creditos"],
+            "Introductorio": bool(m["es_introductorio"]),
+        } for m in malla_actual])
+    else:
+        df_malla = pd.DataFrame([{
+            "Período (Trayecto/Semestre)": "", "Materia": "", "U.C. (créditos)": 0.0, "Introductorio": False
+        }])
+
+    st.caption("Edite la tabla directamente. Use el botón ➕ (abajo de la tabla) para agregar filas. "
+               "Deje una fila con la materia vacía para eliminarla al guardar.")
+    df_editada = st.data_editor(
+        df_malla,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"editor_malla_{prog_malla}",
+        column_config={
+            "U.C. (créditos)": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%g"),
+            "Introductorio": st.column_config.CheckboxColumn(),
+        },
+    )
+
+    if st.button("💾 Guardar malla de este programa", type="primary", use_container_width=True, key="btn_guardar_malla"):
+        filas = []
+        for _, r in df_editada.iterrows():
+            materia = str(r.get("Materia", "") or "").strip().upper()
+            if not materia:
+                continue
+            filas.append({
+                "periodo": str(r.get("Período (Trayecto/Semestre)", "") or "").strip().upper(),
+                "materia": materia,
+                "creditos": r.get("U.C. (créditos)", 0) or 0,
+                "es_introductorio": 1 if r.get("Introductorio") else 0,
+            })
+        if filas:
+            reemplazar_malla(prog_malla, filas)
+            st.success(f"✅ Malla guardada: {len(filas)} materia(s) para {prog_malla}.")
+            st.rerun()
+        else:
+            st.warning("⚠️ No hay materias válidas para guardar. Escriba al menos una materia.")
+
+    with st.expander("📋 Carga rápida: pegar varias materias de una vez"):
+        st.caption("Pegue una materia por línea con este formato (separado por el signo |):  "
+                   "**Período | Materia | U.C. | INTRO**  —  el último campo es opcional (escriba SI si es introductoria). "
+                   "Ejemplo:  TRAYECTO 1 - SEMESTRE 1 | MATEMÁTICA I | 4 | NO")
+        pegado = st.text_area("Pegue aquí la lista de materias", height=180, key="malla_pegar")
+        modo_reemplazar = st.checkbox("Reemplazar toda la malla actual (si no, se agregan a las existentes)", value=True, key="malla_pegar_modo")
+        if st.button("📥 Cargar lista pegada", key="btn_pegar_malla"):
+            nuevas = []
+            for ln in pegado.splitlines():
+                if not ln.strip():
+                    continue
+                partes = [p.strip() for p in ln.split("|")]
+                periodo_v = partes[0].upper() if len(partes) >= 1 else ""
+                materia_v = partes[1].upper() if len(partes) >= 2 else ""
+                try:
+                    cred_v = float(partes[2]) if len(partes) >= 3 and partes[2] else 0
+                except ValueError:
+                    cred_v = 0
+                intro_v = 1 if (len(partes) >= 4 and partes[3].upper().startswith("S")) else 0
+                if materia_v:
+                    nuevas.append({"periodo": periodo_v, "materia": materia_v,
+                                   "creditos": cred_v, "es_introductorio": intro_v})
+            if not nuevas:
+                st.warning("⚠️ No se detectaron materias válidas en el texto pegado.")
+            else:
+                if modo_reemplazar:
+                    reemplazar_malla(prog_malla, nuevas)
+                else:
+                    for f in nuevas:
+                        guardar_materia_malla(prog_malla, f["periodo"], f["materia"],
+                                              f["creditos"], f["es_introductorio"])
+                st.success(f"✅ Se cargaron {len(nuevas)} materia(s) en {prog_malla}.")
+                st.rerun()
 
 # ============================================================
 # PÁGINA: CARGAR NOTAS
 # ============================================================
 
-def pagina_cargar_notas():
-    st.title("📖 Cargar Notas")
-    st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["nombre"]
-    
-    # Buscar estudiante
-    cedula_buscar = st.text_input("Cédula del Estudiante", placeholder="Ej: V-12.345.678")
-    
-    if st.button("🔍 Buscar Estudiante"):
-        if not cedula_buscar:
-            st.warning("⚠️ Ingrese una cédula.")
-            return
-        
-        est = buscar_estudiante(cedula_buscar)
-        if est:
-            est_id = est[0]
-            st.session_state["nota_est_id"] = est_id
-            st.session_state["nota_est_info"] = est
-            st.success(f"✅ Estudiante encontrado: {est[3]} {est[2]}")
-        else:
-            st.error("❌ Estudiante no encontrado.")
-            return
-    
-    # Si hay estudiante seleccionado
-    if "nota_est_id" in st.session_state:
-        est_id = st.session_state["nota_est_id"]
-        est_info = st.session_state.get("nota_est_info")
-        
-        if est_info:
-            tipo_prog = est_info[10]
-            programa = est_info[11]
-            nivel = est_info[12]
-            estado_est = est_info[7]
-            municipio_est = est_info[8]
-            aula_est = est_info[9]
-            
-            st.subheader(f"📝 Cargando notas para: {est_info[3]} {est_info[2]}")
-            st.caption(f"Programa: {programa} | Nivel: {nivel}")
-            
-            # Verificar si el período está abierto
-            # (solo Admin puede cargar notas independientemente)
-            
-            # Obtener pensum del programa
-            pensum = PENSUM_PNF.get(programa, {})
-            
-            if not pensum:
-                st.warning("⚠️ No hay pensum configurado para este programa. Las notas se ingresarán manualmente.")
-                semestre_manual = st.text_input("Semestre/Trimestre", placeholder="Ej: Tercer Trayecto - Quinto Semestre")
-                uc_manual = st.text_input("Unidad Curricular", placeholder="Nombre de la UC")
-                calif_manual = st.text_input("Calificación (1-20 o AP/AC/RE)")
-                cred_manual = st.number_input("Créditos", min_value=1, max_value=12, value=3)
-                
-                if st.button("💾 Guardar Nota Manual"):
-                    if uc_manual and calif_manual:
-                        cal_letras = calificacion_a_letras(calif_manual)
-                        # Verificar apertura
-                        abierto = verificar_apertura(estado_est, municipio_est, aula_est, programa, semestre_manual)
-                        if abierto or rol == "Admin Principal":
-                            registrar_nota(est_id, uc_manual, calif_manual, cal_letras, cred_manual, semestre_manual, usuario)
-                            st.success(f"✅ Nota registrada: {uc_manual} = {calif_manual}")
-                        else:
-                            st.error("❌ El período de notas está cerrado para esta sede/programa/semestre.")
-                    else:
-                        st.error("❌ Complete todos los campos.")
-            else:
-                # Mostrar pensum con campos de calificación
-                # Filtrar trayectos según nivel
-                semestres_disponibles = list(pensum.keys())
-                
-                if tipo_prog == "PNF" and nivel == "TSU":
-                    # TSU: solo Tercer Trayecto+
-                    semestres_disponibles = [s for s in semestres_disponibles if "Tercer" in s or "Cuarto" in s]
-                
-                semestre_sel = st.selectbox("Seleccione Semestre/Trimestre", options=semestres_disponibles)
-                
-                # Verificar apertura
-                abierto = verificar_apertura(estado_est, municipio_est, aula_est, programa, semestre_sel)
-                if not abierto and rol != "Admin Principal":
-                    st.error("❌ El período de notas está **cerrado** para este semestre/sede/programa.")
-                    st.info("Contacte al administrador para solicitar apertura.")
-                    return
-                elif not abierto:
-                    st.warning("⚠️ El período está cerrado, pero como Admin puede cargar notas.")
-                
-                ucs = pensum.get(semestre_sel, [])
-                
-                if ucs:
-                    st.markdown(f"**Semestre:** {semestre_sel}")
-                    
-                    # Cargar notas existentes
-                    notas_existentes = obtener_notas_estudiante(est_id)
-                    notas_dict = {(n[1], n[5]): n[2] for n in notas_existentes}  # (uc, semestre) -> calif
-                    
-                    with st.form("form_cargar_notas"):
-                        notas_nuevas = []
-                        for uc_data in ucs:
-                            uc_nombre = uc_data["uc"]
-                            uc_creditos = uc_data["creditos"]
-                            
-                            calif_existente = notas_dict.get((uc_nombre, semestre_sel))
-                            
-                            col1, col2, col3 = st.columns([3, 1, 1])
-                            with col1:
-                                st.markdown(f"**{uc_nombre}**")
-                            with col2:
-                                calif = st.text_input(
-                                    f"Calif_{uc_nombre[:20]}",
-                                    value=str(calif_existente) if calif_existente else "",
-                                    placeholder="1-20 / AP / AC / RE",
-                                    key=f"nota_{est_id}_{uc_nombre[:30]}"
-                                )
-                            with col3:
-                                st.caption(f"UC: {uc_creditos}")
-                            
-                            notas_nuevas.append({"uc": uc_nombre, "calif": calif, "creditos": uc_creditos})
-                        
-                        submitted = st.form_submit_button("💾 Guardar Todas las Notas")
-                        
-                        if submitted:
-                            guardadas = 0
-                            vacias = 0
-                            errores_calif = 0
-                            for nota_data in notas_nuevas:
-                                calif = nota_data["calif"].strip()
-                                if not calif:
-                                    vacias += 1
-                                    continue
-                                
-                                # Validar calificación
-                                if calif in CALIFICACIONES_ESPECIALES:
-                                    pass  # Válida
-                                else:
-                                    try:
-                                        n = int(calif)
-                                        if not (1 <= n <= 20):
-                                            errores_calif += 1
-                                            continue
-                                    except ValueError:
-                                        errores_calif += 1
-                                        continue
-                                
-                                cal_letras = calificacion_a_letras(calif)
-                                registrar_nota(
-                                    est_id, nota_data["uc"], calif, cal_letras,
-                                    nota_data["creditos"], semestre_sel, usuario
-                                )
-                                guardadas += 1
-                            
-                            if guardadas > 0:
-                                st.success(f"✅ {guardadas} nota(s) guardada(s) exitosamente.")
-                            if vacias > 0:
-                                st.info(f"ℹ️ {vacias} UC(s) sin calificación (se omitieron).")
-                            if errores_calif > 0:
-                                st.error(f"❌ {errores_calif} calificación(es) inválida(s). Use 1-20 o AP/AC/RE.")
-                else:
-                    st.info("No hay UCs definidas para este semestre.")
+elif menu == "📝 Cargar Notas":
+    mostrar_header("📝 Cargar Notas", "Cargue las calificaciones del estudiante según la malla de su programa")
 
+    if rol not in ("ADMIN_PRINCIPAL", "ADMIN_AUXILIAR"):
+        st.error("🚫 Su nivel de usuario no está autorizado para esta sección.")
+        st.stop()
 
-# ============================================================
-# PÁGINA: CERTIFICACIONES
-# ============================================================
+    st.info("Busque el estudiante. Al elegirlo, el sistema muestra **solo** las materias de su "
+            "programa, en orden. Escriba la calificación de cada una y guarde.")
 
-def pagina_certificaciones():
-    st.title("📄 Certificaciones de Calificaciones")
-    st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["nombre"]
-    
-    tab1, tab2 = st.tabs(["📄 Certificación Individual", "📦 Certificación en Lote"])
-    
-    with tab1:
-        st.subheader("Generar Certificación Individual")
-        
-        cedula_buscar = st.text_input("Cédula del Estudiante", placeholder="Ej: V-12.345.678", key="cert_cedula")
-        
-        if cedula_buscar:
-            est = buscar_estudiante(cedula_buscar)
-            if est:
-                est_id = est[0]
-                titularidad = est[15] if len(est) > 15 else ""
-                st.info(f"👨‍🎓 **{est[3]} {est[2]}** | C.I.: {est[1]} | {est[11]} | {est[12]}")
-                
-                notas = obtener_notas_estudiante(est_id)
-                if notas:
-                    # Seleccionar nivel para la certificación
-                    tipo_prog = est[10]
-                    if tipo_prog == "PNF":
-                        nivel_cert = st.selectbox("Nivel para Certificación", options=NIVELES_ACADEMICOS, key="cert_nivel")
-                    else:
-                        nivel_cert = NIVELES_PNFA.get(tipo_prog, "")
-                        st.info(f"Nivel: {nivel_cert}")
-                    
-                    tipo_cert = st.selectbox("Tipo de Certificación", 
-                                           options=["completa", "parcial"],
-                                           format_func=lambda x: "Completa" if x == "completa" else "Parcial")
-                    
-                    if st.button("📄 Generar Certificación", type="primary", key="btn_cert_individual"):
-                        est_data = buscar_estudiante_por_id(est_id)
-                        if est_data:
-                            # Filtrar notas según nivel
-                            if tipo_prog == "PNF" and nivel_cert == "TSU":
-                                notas_filtradas = [n for n in notas if "Tercer" in n[5] or "Cuarto" in n[5]]
-                            else:
-                                notas_filtradas = notas
-                            
-                            pdf_buffer, hash_ver = generar_certificacion_pdf(est_data, notas_filtradas, nivel_cert, tipo_cert)
-                            
-                            # Registrar certificación
-                            registrar_certificacion(est_id, tipo_cert, nivel_cert, usuario, hash_ver)
-                            
-                            st.download_button(
-                                label="⬇️ Descargar Certificación PDF",
-                                data=pdf_buffer.getvalue(),
-                                file_name=f"Certificacion_{cedula_buscar.replace('-','').replace('.','')}_{nivel_cert}.pdf",
-                                mime="application/pdf"
-                            )
-                            st.success("✅ Certificación generada exitosamente.")
-                else:
-                    st.warning("⚠️ No hay notas registradas para este estudiante.")
+    df_est = obtener_expedientes(None)
+    buscar_est = st.text_input("🔍 Buscar por nombre, apellido o cédula", key="notas_buscar")
+    if not df_est.empty and buscar_est.strip():
+        t = buscar_est.strip().upper()
+        df_est = df_est[
+            df_est["nombres"].fillna("").str.upper().str.contains(t) |
+            df_est["apellidos"].fillna("").str.upper().str.contains(t) |
+            df_est["cedula"].fillna("").str.upper().str.contains(t)
+        ]
+
+    if df_est.empty:
+        st.warning("⚠️ No hay estudiantes que coincidan.")
+    else:
+        opciones_e = {
+            f"{r['cedula']} — {r['nombres']} {r.get('apellidos','')}".strip(): idx
+            for idx, r in df_est.iterrows()
+        }
+        sel_e = st.selectbox("Seleccione el estudiante", list(opciones_e.keys()), key="notas_sel")
+        if sel_e:
+            row_e = df_est.loc[opciones_e[sel_e]]
+            ced_e = str(row_e["cedula"])
+            prog_e = str(row_e["programa"])
+            st.markdown(f"**Programa:** {prog_e}")
+            malla_e = obtener_malla(prog_e, incluir_introductorio=True)
+            if not malla_e:
+                st.warning("⚠️ Este programa aún no tiene malla cargada. Cárguela primero en '🧮 Mallas Curriculares'.")
             else:
-                st.error("❌ Estudiante no encontrado.")
-    
-    with tab2:
-        st.subheader("Generar Certificaciones en Lote")
-        st.info("💡 Seleccione estudiantes para generar un archivo ZIP con certificaciones individuales.")
-        
-        # Filtros
-        col1, col2 = st.columns(2)
-        with col1:
-            filtro_estado = st.selectbox("Estado", options=[""] + list(ESTADOS_MUNICIPIOS.keys()), key="batch_estado")
-        with col2:
-            filtro_programa = st.selectbox("Programa", options=[""] + obtener_programas("PNF") + obtener_programas("PNFA_E") + obtener_programas("PNFA_M"), key="batch_prog")
-        
-        if st.button("🔍 Buscar Estudiantes", key="btn_batch_search"):
-            estudiantes = obtener_estudiantes_filtro(
-                estado=filtro_estado,
-                programa=filtro_programa
-            )
-            if estudiantes:
-                st.session_state["batch_estudiantes"] = estudiantes
-            else:
-                st.warning("No se encontraron estudiantes con esos filtros.")
-        
-        if "batch_estudiantes" in st.session_state:
-            estudiantes = st.session_state["batch_estudiantes"]
-            df_est = pd.DataFrame(estudiantes, columns=["ID", "Cédula", "Apellidos", "Nombres", "Sexo", "Estado", "Municipio", "Aula", "Tipo", "Programa", "Nivel", "Ingreso", "Titularidad"])
-            st.dataframe(df_est, use_container_width=True, hide_index=True)
-            
-            seleccionados = st.multiselect(
-                "Seleccione estudiantes (por ID)",
-                options=[e[0] for e in estudiantes],
-                key="batch_selected"
-            )
-            
-            if seleccionados and st.button("📦 Generar ZIP", type="primary", key="btn_batch_gen"):
-                nivel_batch = st.session_state.get("batch_nivel", "BACHILLER")
-                zip_buffer = generar_certificacion_lote(seleccionados, nivel_batch)
-                st.download_button(
-                    label="⬇️ Descargar ZIP con Certificaciones",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"Certificaciones_Lote_{datetime.now().strftime('%Y%m%d')}.zip",
-                    mime="application/zip"
+                notas_e = obtener_notas(ced_e)
+                df_notas = pd.DataFrame([{
+                    "Período": m["periodo"],
+                    "Materia": m["materia"],
+                    "U.C.": m["creditos"],
+                    "Introductorio": ("Sí" if m["es_introductorio"] else ""),
+                    "Calificación": notas_e.get(m["materia"], ""),
+                } for m in malla_e])
+                st.caption("Escriba la calificación en la última columna. Las materias marcadas 'Sí' "
+                           "(introductorias) se guardan pero no salen en la certificación.")
+                df_notas_ed = st.data_editor(
+                    df_notas,
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"editor_notas_{ced_e}",
+                    disabled=["Período", "Materia", "U.C.", "Introductorio"],
                 )
-                st.success(f"✅ {len(seleccionados)} certificación(es) generada(s).")
-
-
-
+                if st.button("💾 Guardar calificaciones", type="primary", use_container_width=True, key="btn_guardar_notas"):
+                    notas_dict = {}
+                    for i, m in enumerate(malla_e):
+                        cal = str(df_notas_ed.iloc[i]["Calificación"] or "").strip().upper()
+                        notas_dict[m["materia"]] = (m["creditos"], cal)
+                    guardar_notas(ced_e, prog_e, notas_dict)
+                    st.success("✅ Calificaciones guardadas. Ya puede generar la certificación en '📄 Generar Documentos'.")
 
 # ============================================================
-# PÁGINA: LISTADO DE ESTUDIANTES
+# PÁGINA: SOLICITUDES (Modificación / Eliminación)
 # ============================================================
 
-def pagina_listado_estudiantes():
-    st.title("📋 Listado de Estudiantes")
-    st.markdown("---")
-    
-    def reset_municipio_list_est():
-        """Callback: al cambiar el filtro de estado, resetea municipio"""
-        st.session_state.pop("list_municipio", None)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filtro_estado = st.selectbox(
-            "Filtrar por Estado",
-            options=[""] + list(ESTADOS_MUNICIPIOS.keys()),
-            key="list_estado",
-            on_change=reset_municipio_list_est
-        )
-    with col2:
-        municipios = ESTADOS_MUNICIPIOS.get(filtro_estado, []) if filtro_estado else []
-        # Recuperar valor previo; si ya no está en la lista, resetear
-        mun_prev_list = st.session_state.get("list_municipio")
-        mun_opts_list = [""] + municipios
-        mun_idx_list = mun_opts_list.index(mun_prev_list) if mun_prev_list in mun_opts_list else 0
-        filtro_municipio = st.selectbox(
-            "Filtrar por Municipio",
-            options=mun_opts_list,
-            index=mun_idx_list,
-            key="list_municipio"
-        )
-    with col3:
-        filtro_programa = st.selectbox("Filtrar por Programa", options=[""] + obtener_programas("PNF") + obtener_programas("PNFA_E") + obtener_programas("PNFA_M"), key="list_prog")
-    
-    if st.button("🔍 Aplicar Filtros", key="btn_list_filter"):
-        estudiantes = obtener_estudiantes_filtro(
-            estado=filtro_estado,
-            municipio=filtro_municipio,
-            programa=filtro_programa
-        )
-        if estudiantes:
-            df = pd.DataFrame(estudiantes, columns=["ID", "Cédula", "Apellidos", "Nombres", "Sexo", "Estado", "Municipio", "Aula", "Tipo", "Programa", "Nivel", "Ingreso", "Titularidad"])
-            # Formatear sexo
-            df["Sexo"] = df["Sexo"].map({"M": "Masculino", "F": "Femenino"}).fillna(df["Sexo"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            # Exportar a Excel
-            buffer_excel = BytesIO()
-            with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name="Estudiantes", index=False)
-            buffer_excel.seek(0)
-            st.download_button(
-                label="📊 Exportar a Excel",
-                data=buffer_excel.getvalue(),
-                file_name=f"Listado_Estudiantes_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+elif menu in ("📋 Solicitudes de Modificación", "📋 Mis Solicitudes"):
+
+    if rol == "ADMIN_REGIONAL":
+        mostrar_header("📋 Mis Solicitudes", "Estado de sus solicitudes enviadas")
+        df_sol = obtener_solicitudes()
+        if not df_sol.empty:
+            df_sol = df_sol[df_sol["solicitado_por"] == st.session_state.usuario]
+        if df_sol.empty:
+            st.info("📭 Usted no ha enviado solicitudes todavía.")
         else:
-            st.info("No se encontraron estudiantes con esos filtros.")
-    
-    # Mostrar todos si no hay filtros
-    todos = obtener_estudiantes_filtro()
-    if todos:
-        df_all = pd.DataFrame(todos, columns=["ID", "Cédula", "Apellidos", "Nombres", "Sexo", "Estado", "Municipio", "Aula", "Tipo", "Programa", "Nivel", "Ingreso", "Titularidad"])
-        df_all["Sexo"] = df_all["Sexo"].map({"M": "Masculino", "F": "Femenino"}).fillna(df_all["Sexo"])
-        st.dataframe(df_all, use_container_width=True, hide_index=True)
+            for _, s in df_sol.iterrows():
+                es_elim = (s["campo_modificar"] == CAMPO_ELIMINAR)
+                estado_badge = {"PENDIENTE": "🟡 PENDIENTE",
+                                "APROBADA": "🟢 APROBADA",
+                                "RECHAZADA": "🔴 RECHAZADA"}.get(s["estado_solicitud"], s["estado_solicitud"])
+                titulo_card = "🗑️ Eliminación" if es_elim else f"📝 Modificar: {s['campo_modificar']}"
+                with st.expander(f"{titulo_card} — Cédula {s.get('cedula','(eliminado)')} — {estado_badge}"):
+                    st.write(f"**Titular:** {s.get('nombres','')} {s.get('apellidos','')}")
+                    if es_elim:
+                        st.write("**Tipo:** Solicitud de ELIMINACIÓN del expediente")
+                    else:
+                        st.write(f"**Valor actual:** {s['valor_actual']}")
+                        st.write(f"**Valor nuevo:** {s['valor_nuevo']}")
+                    st.write(f"**Motivo:** {s['motivo']}")
+                    st.write(f"**Fecha solicitud:** {s['fecha_solicitud']}")
+                    if s["estado_solicitud"] != "PENDIENTE":
+                        st.write(f"**Revisado por:** {s['revisado_por']}")
+                        st.write(f"**Fecha revisión:** {s['fecha_revision']}")
 
+    else:
+        # ADMIN_PRINCIPAL y ADMIN_AUXILIAR (Nivel 1 y 2): aprueban / ejecutan
+        mostrar_header("📋 Solicitudes de Modificación", "Revise, apruebe o rechace las solicitudes")
+
+        tab_pend, tab_hist = st.tabs(["🟡 Pendientes", "📚 Historial"])
+
+        with tab_pend:
+            df_pend = obtener_solicitudes("PENDIENTE")
+            if df_pend.empty:
+                st.info("✅ No hay solicitudes pendientes.")
+            else:
+                for _, s in df_pend.iterrows():
+                    es_elim = (s["campo_modificar"] == CAMPO_ELIMINAR)
+                    titulo_card = "🗑️ ELIMINACIÓN de expediente" if es_elim else f"📝 Modificar: {s['campo_modificar']}"
+                    with st.expander(f"{titulo_card} — Cédula {s.get('cedula','(?)')} — 🟡 PENDIENTE", expanded=True):
+                        st.write(f"**Titular:** {s.get('nombres','')} {s.get('apellidos','')}")
+                        st.write(f"**Solicitado por:** {s['solicitado_por']}")
+                        if es_elim:
+                            st.error("⚠️ Esta solicitud ELIMINARÁ el expediente y su PDF de forma permanente.")
+                        else:
+                            st.write(f"**Valor actual:** {s['valor_actual']}")
+                            st.write(f"**Valor nuevo:** {s['valor_nuevo']}")
+                        st.write(f"**Motivo:** {s['motivo']}")
+                        st.write(f"**Fecha:** {s['fecha_solicitud']}")
+
+                        col_a, col_r = st.columns(2)
+                        with col_a:
+                            label_ap = "🗑️ Aprobar y ELIMINAR" if es_elim else "✅ Aprobar"
+                            if st.button(label_ap, key=f"ap_{s['id']}", use_container_width=True, type="primary"):
+                                ok, msg = aprobar_solicitud(s['id'], st.session_state.usuario)
+                                if ok:
+                                    st.success(f"✅ {msg}")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {msg}")
+                        with col_r:
+                            if st.button("❌ Rechazar", key=f"re_{s['id']}", use_container_width=True):
+                                rechazar_solicitud(s['id'], st.session_state.usuario)
+                                st.warning("Solicitud rechazada.")
+                                st.rerun()
+
+        with tab_hist:
+            df_hist = obtener_solicitudes()
+            if not df_hist.empty:
+                df_hist = df_hist[df_hist["estado_solicitud"] != "PENDIENTE"]
+            if df_hist.empty:
+                st.info("📭 No hay solicitudes en el historial.")
+            else:
+                for _, s in df_hist.iterrows():
+                    es_elim = (s["campo_modificar"] == CAMPO_ELIMINAR)
+                    estado_badge = {"APROBADA": "🟢 APROBADA", "RECHAZADA": "🔴 RECHAZADA"}.get(s["estado_solicitud"], s["estado_solicitud"])
+                    tipo_txt = "🗑️ Eliminación" if es_elim else f"📝 {s['campo_modificar']}"
+                    with st.expander(f"{tipo_txt} — Cédula {s.get('cedula','(eliminado)')} — {estado_badge}"):
+                        st.write(f"**Titular:** {s.get('nombres','')} {s.get('apellidos','')}")
+                        st.write(f"**Solicitado por:** {s['solicitado_por']}")
+                        st.write(f"**Motivo:** {s['motivo']}")
+                        st.write(f"**Revisado por:** {s['revisado_por']}")
+                        st.write(f"**Fecha revisión:** {s['fecha_revision']}")
+
+# ============================================================
+# PÁGINA: ESTADÍSTICAS
+# ============================================================
+
+elif menu == "📈 Estadísticas":
+    mostrar_header("📈 Estadísticas", "Resumen general del sistema")
+
+    df = obtener_expedientes()
+
+    if df.empty:
+        st.info("📊 Aún no hay expedientes registrados para mostrar estadísticas.")
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("📁 Total Expedientes", len(df))
+        col2.metric("🏛️ Estados", df["estado"].nunique())
+        col3.metric("🎓 Programas", df["programa"].nunique())
+        col4.metric("📂 Tipos Expediente", df["tipo_expediente"].nunique())
+
+        st.markdown("---")
+
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.subheader("📊 Por Estado")
+            st.bar_chart(df["estado"].value_counts())
+        with col_g2:
+            st.subheader("📊 Por Tipo de Programa")
+            st.bar_chart(df["tipo_programa"].value_counts())
+
+        col_g3, col_g4 = st.columns(2)
+        with col_g3:
+            st.subheader("📊 Por Tipo de Expediente")
+            st.bar_chart(df["tipo_expediente"].value_counts())
+        with col_g4:
+            st.subheader("📊 Top 10 Programas")
+            st.bar_chart(df["programa"].value_counts().head(10))
 
 # ============================================================
 # PÁGINA: GESTIÓN DE USUARIOS
 # ============================================================
 
-def pagina_gestion_usuarios():
-    st.title("👥 Gestión de Usuarios")
-    st.markdown("---")
-    
-    rol_actual = st.session_state.user_rol
-    usuario_actual = st.session_state.user_info["cedula"]
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Listado", "➕ Crear Usuario", "🔑 Cambiar Contraseña", "⚙️ Estado"])
-    
-    # --- Tab 1: Listado ---
-    with tab1:
+elif menu == "👥 Gestión de Usuarios":
+    mostrar_header("👥 Gestión de Usuarios", "Cree y administre los usuarios del sistema")
+
+    # Blindaje: solo Nivel 1 y Nivel 2 pueden crear/administrar usuarios.
+    # El Nivel 3 (Administrador Regional) NO tiene acceso a esta sección.
+    if rol not in ("ADMIN_PRINCIPAL", "ADMIN_AUXILIAR"):
+        st.error("🚫 No tiene permiso para acceder a la Gestión de Usuarios.")
+        st.stop()
+
+    tab_crear, tab_lista = st.tabs(["➕ Crear Usuario", "📋 Lista de Usuarios"])
+
+    with tab_crear:
+        with st.form("form_crear_usuario", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                nuevo_usuario = st.text_input("Usuario (para iniciar sesión) *")
+                nuevo_nombre = st.text_input("Nombre completo *")
+                nuevo_correo = st.text_input("Correo electrónico")
+            with col2:
+                nueva_clave = st.text_input("Contraseña *", type="password")
+                # Un ADMIN_AUXILIAR no puede crear ADMIN_PRINCIPAL
+                roles_disponibles = ROLES if rol == "ADMIN_PRINCIPAL" else ["ADMIN_AUXILIAR", "ADMIN_REGIONAL"]
+                nuevo_rol = st.selectbox("Rol *", roles_disponibles)
+
+            if st.form_submit_button("➕ Crear Usuario", use_container_width=True, type="primary"):
+                if nuevo_usuario.strip() and nueva_clave.strip() and nuevo_nombre.strip():
+                    ok = crear_usuario(nuevo_usuario.strip(), nueva_clave.strip(),
+                                       nuevo_rol, nuevo_nombre.strip(), nuevo_correo.strip())
+                    if ok:
+                        st.success(f"✅ Usuario **{nuevo_usuario}** creado exitosamente.")
+                    else:
+                        st.error("❌ Ese nombre de usuario ya existe. Elija otro.")
+                else:
+                    st.warning("⚠️ Complete usuario, contraseña y nombre completo.")
+
+    with tab_lista:
         usuarios = obtener_usuarios()
-        if usuarios:
-            df = pd.DataFrame(usuarios, columns=["ID", "Nombre", "Cédula", "Rol", "Estado", "Fecha Creación"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
+        if not usuarios:
             st.info("No hay usuarios registrados.")
-    
-    # --- Tab 2: Crear Usuario ---
-    with tab2:
-        with st.form("form_crear_usuario"):
-            nuevo_nombre = st.text_input("Nombre Completo *")
-            nueva_cedula = st.text_input("Cédula de Identidad *", placeholder="Ej: V-12.345.678")
-            nueva_clave = st.text_input("Contraseña *", type="password", placeholder="Mínimo 8 caracteres")
-            nuevo_rol = st.selectbox("Rol *", options=ROLES_LIST)
-            nuevo_estado = st.selectbox("Estado *", options=["Activo", "Inactivo"])
-            
-            submitted = st.form_submit_button("✅ Crear Usuario")
-            
-            if submitted:
-                errores = []
-                if not nuevo_nombre:
-                    errores.append("Nombre es obligatorio")
-                if not nueva_cedula:
-                    errores.append("Cédula es obligatoria")
-                if not nueva_clave or len(nueva_clave) < 8:
-                    errores.append("Contraseña debe tener al menos 8 caracteres")
-                
-                if errores:
-                    for err in errores:
-                        st.error(f"❌ {err}")
-                else:
-                    ok = crear_usuario(nuevo_nombre.upper(), nueva_cedula, nueva_clave, nuevo_rol, nuevo_estado)
-                    if ok:
-                        st.success(f"✅ Usuario {nuevo_nombre} creado exitosamente.")
-                    else:
-                        st.error("❌ Error al crear usuario. Posible cédula duplicada.")
-    
-    # --- Tab 3: Cambiar Contraseña (v2.1 NUEVO) ---
-    with tab3:
-        st.subheader("🔑 Cambiar Mi Contraseña")
-        st.info(f"Usuario: **{st.session_state.user_info['nombre']}** | Cédula: **{usuario_actual}**")
-        
-        with st.form("form_cambiar_clave"):
-            clave_actual = st.text_input("Contraseña Actual *", type="password")
-            clave_nueva = st.text_input("Contraseña Nueva *", type="password", placeholder="Mínimo 8 caracteres")
-            clave_confirmar = st.text_input("Confirmar Contraseña Nueva *", type="password")
-            
-            submitted = st.form_submit_button("🔑 Cambiar Contraseña")
-            
-            if submitted:
-                if not clave_actual or not clave_nueva or not clave_confirmar:
-                    st.error("❌ Todos los campos son obligatorios.")
-                elif clave_nueva != clave_confirmar:
-                    st.error("❌ La contraseña nueva y su confirmación no coinciden.")
-                elif len(clave_nueva) < 8:
-                    st.error("❌ La contraseña nueva debe tener al menos 8 caracteres.")
-                else:
-                    ok, msg = cambiar_clave_usuario(usuario_actual, clave_actual, clave_nueva)
-                    if ok:
-                        st.success(f"✅ {msg}")
-                    else:
-                        st.error(f"❌ {msg}")
-    
-    # --- Tab 4: Cambiar Estado ---
-    with tab4:
-        if rol_actual == "Admin Principal":
-            usuarios = obtener_usuarios()
-            if usuarios:
-                for u in usuarios:
-                    u_id, u_nombre, u_cedula, u_rol, u_estado, u_fecha = u
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.markdown(f"**{u_nombre}** ({u_cedula}) - {u_rol}")
-                    with col2:
-                        st.caption(f"Estado: {u_estado}")
-                    with col3:
-                        nuevo_est = "Inactivo" if u_estado == "Activo" else "Activo"
-                        if st.button(f"{'🔴' if u_estado == 'Activo' else '🟢'} {nuevo_est}", key=f"est_{u_id}"):
-                            actualizar_estado_usuario(u_id, nuevo_est)
-                            st.success(f"✅ Estado de {u_nombre} cambiado a {nuevo_est}.")
-                            st.rerun()
         else:
-            st.warning("⚠️ Solo el Admin Principal puede cambiar estados de usuario.")
+            for u in usuarios:
+                usr, u_rol, u_nombre, u_correo, u_estado, u_fecha = u
+                estado_ico = "🟢 Activo" if u_estado == "ACTIVO" else "🔴 Inactivo"
+                with st.expander(f"👤 {u_nombre} ({usr}) — {rol_nombre.get(u_rol, u_rol)} — {estado_ico}"):
+                    st.write(f"**Usuario:** {usr}")
+                    st.write(f"**Rol:** {rol_nombre.get(u_rol, u_rol)}")
+                    st.write(f"**Correo:** {u_correo or '(sin correo)'}")
+                    st.write(f"**Creado:** {u_fecha}")
 
-
-# ============================================================
-# PÁGINA: GESTIÓN DE ALMACENES
-# ============================================================
-
-def pagina_gestion_almacenes():
-    st.title("🏫 Gestión de Almacenes / Aulas Taller")
-    st.markdown("---")
-    
-    tab1, tab2, tab3 = st.tabs(["📋 Listado", "➕ Crear Almacén", "🗑️ Eliminar Almacén"])
-    
-    with tab1:
-        st.subheader("📋 Almacenes / Aulas Taller Registrados")
-        
-        # Filtros para buscar fácilmente entre 1000+ registros
-        # --- Cascada de filtros Estado → Municipio ---
-        def reset_municipio_filtro():
-            """Callback: al cambiar el filtro de estado, resetea el filtro de municipio"""
-            st.session_state.pop("alm_filt_mun", None)
-        
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            filtro_estado = st.selectbox(
-                "Filtrar por Estado",
-                options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()),
-                key="alm_filt_est",
-                on_change=reset_municipio_filtro
-            )
-        with col_f2:
-            if filtro_estado != "Todos":
-                municipios_disponibles = ["Todos"] + ESTADOS_MUNICIPIOS.get(filtro_estado, [])
-            else:
-                municipios_disponibles = ["Todos"]
-            # Recuperar valor previo; si ya no está en la lista, resetear
-            municipio_previo_filt = st.session_state.get("alm_filt_mun")
-            if municipio_previo_filt and municipio_previo_filt in municipios_disponibles:
-                mun_index_filt = municipios_disponibles.index(municipio_previo_filt)
-            else:
-                mun_index_filt = 0
-            filtro_municipio = st.selectbox(
-                "Filtrar por Municipio",
-                options=municipios_disponibles,
-                index=mun_index_filt,
-                key="alm_filt_mun"
-            )
-        with col_f3:
-            filtro_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_filt_bus")
-        
-        estado_sel = filtro_estado if filtro_estado != "Todos" else ""
-        municipio_sel = filtro_municipio if filtro_municipio != "Todos" else ""
-        almacenes = obtener_almacenes_filtro(estado_sel, municipio_sel, filtro_busqueda)
-        
-        if almacenes:
-            df = pd.DataFrame(almacenes, columns=["ID", "Nombre", "Estado", "Municipio", "Aula Taller"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            st.caption(f"Mostrando {len(almacenes)} almacén(es)")
-        else:
-            st.info("No se encontraron almacenes con esos filtros.")
-    
-    with tab2:
-        st.subheader("➕ Crear Nuevo Almacén")
-        
-        # 1. SELECTORES FUERA DEL FORMULARIO (Actualización instantánea)
-        # --- Cascada Estado → Municipio con callback ---
-        def reset_municipio_crear():
-            """Callback: al cambiar el estado, resetea el municipio"""
-            st.session_state.pop("alm_crear_mun", None)
-        
-        estado_alm = st.selectbox(
-            "Estado *",
-            options=list(ESTADOS_MUNICIPIOS.keys()),
-            key="alm_crear_est",
-            on_change=reset_municipio_crear
-        )
-        
-        # Carga dinámica de municipios según el estado elegido
-        municipios_disponibles = ESTADOS_MUNICIPIOS.get(estado_alm, ["Seleccione"])
-        # Recuperar valor previo del municipio; si ya no está en la lista, resetear
-        municipio_previo = st.session_state.get("alm_crear_mun")
-        if municipio_previo and municipio_previo in municipios_disponibles:
-            mun_index_crear = municipios_disponibles.index(municipio_previo)
-        else:
-            mun_index_crear = 0
-        municipio_alm = st.selectbox(
-            "Municipio *",
-            options=municipios_disponibles,
-            index=mun_index_crear,
-            key="alm_crear_mun"
-        )
-        
-        # 2. FORMULARIO SOLO PARA CAMPOS DE TEXTO Y BOTÓN
-        with st.form("form_crear_almacen"):
-            nombre_alm = st.text_input("Nombre del Almacén *", placeholder="Ej: Aula Taller Principal")
-            aula_alm = st.text_input("Aula Taller *", placeholder="Ej: Aula 01")
-            
-            submitted = st.form_submit_button("✅ Crear Almacén")
-            
-            if submitted:
-                if not nombre_alm or not aula_alm:
-                    st.error("❌ Todos los campos son obligatorios.")
-                else:
-                    # Se envían los valores capturados de los selectores (estado_alm, municipio_alm)
-                    ok = crear_almacen(nombre_alm.upper(), estado_alm, municipio_alm, aula_alm.upper())
-                    if ok:
-                        st.success(f"✅ Almacén '{nombre_alm}' creado exitosamente.")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("❌ Error al crear almacén.")
-    
-    with tab3:
-        st.subheader("🗑️ Eliminar Almacén / Aula Taller")
-        st.warning("⚠️ Al eliminar un almacén, los estudiantes asociados a esa aula quedarán sin asignación. Verifique antes de eliminar.")
-        
-        # Filtro para buscar el almacén a eliminar
-        # --- Cascada de filtros Estado → Municipio para eliminar ---
-        def reset_municipio_elim():
-            """Callback: al cambiar el filtro de estado, resetea el filtro de municipio"""
-            st.session_state.pop("alm_elim_mun", None)
-        
-        elim_estado = st.selectbox(
-            "Filtrar por Estado",
-            options=["Todos"] + list(ESTADOS_MUNICIPIOS.keys()),
-            key="alm_elim_est",
-            on_change=reset_municipio_elim
-        )
-        elim_estado_sel = elim_estado if elim_estado != "Todos" else ""
-        if elim_estado != "Todos":
-            elim_municipios = ["Todos"] + ESTADOS_MUNICIPIOS.get(elim_estado, [])
-        else:
-            elim_municipios = ["Todos"]
-        # Recuperar valor previo; si ya no está en la lista, resetear
-        elim_mun_previo = st.session_state.get("alm_elim_mun")
-        if elim_mun_previo and elim_mun_previo in elim_municipios:
-            elim_mun_index = elim_municipios.index(elim_mun_previo)
-        else:
-            elim_mun_index = 0
-        elim_municipio = st.selectbox(
-            "Filtrar por Municipio",
-            options=elim_municipios,
-            index=elim_mun_index,
-            key="alm_elim_mun"
-        )
-        elim_busqueda = st.text_input("🔍 Buscar por nombre o aula", placeholder="Escriba para buscar...", key="alm_elim_bus")
-        
-        elim_municipio_sel = elim_municipio if elim_municipio != "Todos" else ""
-        almacenes_elim = obtener_almacenes_filtro(elim_estado_sel, elim_municipio_sel, elim_busqueda)
-        
-        if almacenes_elim:
-            df_elim = pd.DataFrame(almacenes_elim, columns=["ID", "Nombre", "Estado", "Municipio", "Aula Taller"])
-            st.dataframe(df_elim, use_container_width=True, hide_index=True)
-            st.caption(f"Mostrando {len(almacenes_elim)} almacén(es). Seleccione el ID a eliminar.")
-            
-            # Selección del ID a eliminar
-            almacen_id_elim = st.number_input("ID del almacén a eliminar", min_value=1, step=1, key="alm_elim_id")
-            
-            # Buscar el almacén seleccionado para mostrar sus datos
-            almacen_seleccionado = None
-            for a in almacenes_elim:
-                if a[0] == almacen_id_elim:
-                    almacen_seleccionado = a
-                    break
-            
-            if almacen_seleccionado:
-                st.info(f"📌 Va a eliminar: **{almacen_seleccionado[1]}** | Estado: {almacen_seleccionado[2]} | Municipio: {almacen_seleccionado[3]} | Aula: {almacen_seleccionado[4]}")
-                
-                confirmar_elim = st.checkbox("✅ Confirmo que deseo eliminar este almacén", key="alm_elim_confirm")
-                
-                if st.button("🗑️ Eliminar Almacén", type="primary", key="btn_elim_almacen"):
-                    if confirmar_elim:
-                        ok = eliminar_almacen(almacen_id_elim)
-                        if ok:
-                            st.success(f"✅ Almacén ID {almacen_id_elim} eliminado exitosamente.")
-                            time.sleep(1)
-                            st.rerun()
+                    col_e, col_p = st.columns(2)
+                    with col_e:
+                        if u_estado == "ACTIVO":
+                            if st.button("🔴 Desactivar", key=f"des_{usr}", use_container_width=True):
+                                cambiar_estado_usuario(usr, "INACTIVO")
+                                st.rerun()
                         else:
-                            st.error("❌ No se encontró el almacén con ese ID.")
-                    else:
-                        st.error("❌ Debe marcar la casilla de confirmación antes de eliminar.")
-        else:
-            st.info("No se encontraron almacenes con esos filtros.")
+                            if st.button("🟢 Activar", key=f"act_{usr}", use_container_width=True):
+                                cambiar_estado_usuario(usr, "ACTIVO")
+                                st.rerun()
+                    with col_p:
+                        nueva_c = st.text_input("Nueva contraseña", type="password", key=f"nc_{usr}")
+                        if st.button("🔑 Cambiar Contraseña", key=f"cc_{usr}", use_container_width=True):
+                            if nueva_c.strip():
+                                cambiar_clave_usuario(usr, nueva_c.strip())
+                                st.success("✅ Contraseña actualizada.")
+                            else:
+                                st.warning("⚠️ Escriba la nueva contraseña.")
 
 # ============================================================
 # PÁGINA: CONFIGURACIÓN DE LISTAS
 # ============================================================
 
-def pagina_config_listas():
-    st.title("⚙️ Configuración de Listas")
+elif menu == "⚙️ Configuración de Listas":
+    mostrar_header("⚙️ Configuración de Listas", "Administre los programas de cada tipo")
+
+    st.info("Aquí puede agregar o quitar programas dentro de cada Tipo de Programa. "
+            "Si no agrega ninguno, el sistema usa la lista oficial predeterminada.")
+
+    tipo_sel = st.selectbox("Tipo de Programa", list(TIPOS_PROGRAMA_PROGRAMAS.keys()))
+
     st.markdown("---")
-    
-    tab1, tab2 = st.tabs(["📋 Programas Existentes", "➕ Agregar Programa"])
-    
-    with tab1:
-        programas_db = obtener_todos_programas_config()
-        if programas_db:
-            df = pd.DataFrame(programas_db, columns=["ID", "Tipo", "Programa"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            prog_del = st.number_input("ID del programa a eliminar", min_value=1, step=1, key="del_prog_id")
-            if st.button("🗑️ Eliminar Programa"):
-                eliminar_programa_lista(prog_del)
-                st.success("✅ Programa eliminado.")
+    st.subheader(f"🎓 Programas de: {tipo_sel}")
+
+    personalizados = obtener_lista_editable("programa", tipo_sel)
+    predeterminados = TIPOS_PROGRAMA_PROGRAMAS.get(tipo_sel, [])
+
+    if personalizados:
+        st.write("**Programas personalizados (guardados):**")
+        for val in personalizados:
+            col_v, col_x = st.columns([5, 1])
+            col_v.write(f"• {val}")
+            if col_x.button("🗑️", key=f"del_prog_{tipo_sel}_{val}"):
+                eliminar_valor_lista("programa", tipo_sel, val)
                 st.rerun()
-        else:
-            st.info("No hay programas adicionales configurados.")
-        
-        # Mostrar programas por defecto
-        st.subheader("📌 Programas por Defecto (del sistema)")
-        for tipo, progs in PROGRAMAS_POR_DEFECTO.items():
-            st.markdown(f"**{tipo}:**")
-            for p in progs:
-                st.markdown(f"  - {p}")
-    
-    with tab2:
-        with st.form("form_agregar_programa"):
-            tipo_prog_nuevo = st.selectbox("Tipo de Programa *", options=TIPOS_PROGRAMA)
-            programa_nuevo = st.text_input("Nombre del Programa *", placeholder="Ej: PROFESOR DE MATEMÁTICA")
-            
-            submitted = st.form_submit_button("✅ Agregar Programa")
-            
-            if submitted:
-                if not programa_nuevo:
-                    st.error("❌ Ingrese un nombre de programa.")
-                else:
-                    ok = agregar_programa_lista(tipo_prog_nuevo, programa_nuevo.upper())
-                    if ok:
-                        st.success(f"✅ Programa '{programa_nuevo}' agregado a {tipo_prog_nuevo}.")
-                    else:
-                        st.error("❌ Error al agregar programa.")
+    else:
+        st.caption("Actualmente se están usando los programas oficiales predeterminados:")
+        for val in predeterminados:
+            st.write(f"• {val}")
 
+    st.markdown("---")
+    nuevo_prog = st.text_input("Agregar nuevo programa")
+    if st.button("➕ Agregar Programa", type="primary"):
+        if nuevo_prog.strip():
+            ok = agregar_valor_lista("programa", tipo_sel, nuevo_prog.strip().upper())
+            if ok:
+                st.success("✅ Programa agregado.")
+                st.rerun()
+            else:
+                st.error("❌ Ese programa ya existe en la lista.")
+        else:
+            st.warning("⚠️ Escriba el nombre del programa.")
 
 # ============================================================
-# PÁGINA: APERTURA / CIERRE DE NOTAS
+# PÁGINA: CONFIGURACIÓN DE CORREO
 # ============================================================
 
-def pagina_apertura_notas():
-    st.title("🔓 Apertura / Cierre de Notas")
-    st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["nombre"]
-    
-    if rol != "Admin Principal":
-        st.warning("⚠️ Solo el Admin Principal (Nivel 1) puede gestionar la apertura/cierre de notas.")
-        st.info("💡 Si necesita cargar notas y el período está cerrado, solicite apertura a su superior.")
-        return
-    
-    st.info("💡 Controle cuándo los Secretarios Situados pueden cargar notas. Puede aperturar a nivel **Nacional**, **Estadal**, **Municipal** o **por Plantel**.")
-    
-    # ---- SECCIÓN 1: APERTURA ----
-    st.subheader("📤 Aperturar / Cerrar Período de Notas")
-    
-    # Selector de nivel de apertura (fuera del form para cascada)
-    nivel_opciones = ["Nacional", "Estadal", "Municipal", "Por Plantel"]
-    nivel_sel = st.selectbox("🎯 Nivel de Apertura *", options=nivel_opciones, key="ap_nivel")
-    
-    nivel_map = {"Nacional": "nacional", "Estadal": "estadal", "Municipal": "municipal", "Por Plantel": "plantel"}
-    nivel_val = nivel_map[nivel_sel]
-    
-    # Campos dinámicos según nivel
-    if nivel_val == "nacional":
-        st.info("🌍 **Apertura Nacional**: Aplica para TODOS los estados, municipios y planteles.")
-        ap_estado = "TODOS"
-        ap_municipio = "TODOS"
-        ap_aula = "TODOS"
-    elif nivel_val == "estadal":
-        st.info("🏛️ **Apertura Estadal**: Aplica para un estado específico y TODOS sus municipios y planteles.")
-        ap_estado = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()), key="ap_estado_est")
-        ap_municipio = "TODOS"
-        ap_aula = "TODOS"
-    elif nivel_val == "municipal":
-        st.info("🏘️ **Apertura Municipal**: Aplica para un municipio específico y TODAS sus aulas.")
-        ap_estado = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()), key="ap_estado_mun")
-        municipios = ESTADOS_MUNICIPIOS.get(ap_estado, [])
-        ap_municipio = st.selectbox("Municipio *", options=municipios, key="ap_municipio_mun")
-        ap_aula = "TODOS"
-    else:  # plantel
-        st.info("🏫 **Apertura por Plantel**: Aplica para un aula taller específica.")
-        col_e, col_m = st.columns(2)
-        with col_e:
-            ap_estado = st.selectbox("Estado *", options=list(ESTADOS_MUNICIPIOS.keys()), key="ap_estado_pla")
-        with col_m:
-            municipios = ESTADOS_MUNICIPIOS.get(ap_estado, [])
-            ap_municipio = st.selectbox("Municipio *", options=municipios, key="ap_municipio_pla")
-        
-        # Aulas disponibles
-        almacenes = obtener_almacenes()
-        aulas_opciones = [f"{a[1]} ({a[4]})" for a in almacenes if a[2] == ap_estado and a[3] == ap_municipio]
-        if not aulas_opciones:
-            aulas_opciones = ["Sin aulas disponibles"]
-        ap_aula_display = st.selectbox("Aula Taller *", options=aulas_opciones, key="ap_aula_pla")
-        ap_aula = ap_aula_display.split(" (")[0] if " (" in ap_aula_display else ap_aula_display
-    
-    # Tipo de Programa y Programa (cascada)
-    col_tipo, col_prog = st.columns(2)
-    with col_tipo:
-        ap_tipo_prog = st.selectbox("Tipo de Programa *", options=TIPOS_PROGRAMA, key="ap_tipo_prog")
-    with col_prog:
-        programas = obtener_programas(ap_tipo_prog)
-        ap_programa = st.selectbox("Programa *", options=programas, key="ap_prog")
-    
-    ap_semestre = st.text_input("Semestre/Trimestre *", placeholder="Ej: Tercer Trayecto - Quinto Semestre", key="ap_semestre")
-    
-    accion = st.radio("Acción", options=["Abrir", "Cerrar"], horizontal=True, key="ap_accion")
-    
-    if st.button("💾 Aplicar Apertura/Cierre", type="primary", key="btn_apertura"):
-        if not ap_semestre:
-            st.error("❌ El campo Semestre/Trimestre es obligatorio.")
-        else:
-            abierto = accion == "Abrir"
-            establecer_apertura(nivel_val, ap_estado, ap_municipio, ap_aula, ap_tipo_prog, ap_programa, ap_semestre, abierto, usuario)
-            estado_texto = "ABIERTO" if abierto else "CERRADO"
-            nivel_texto = nivel_sel
-            st.success(f"✅ Período de notas {estado_texto} a nivel **{nivel_texto}** para **{ap_programa}** - {ap_semestre}.")
-    
-    st.markdown("---")
-    
-    # ---- SECCIÓN 2: ESTADO ACTUAL DE APERTURAS ----
-    st.subheader("📋 Estado Actual de Aperturas")
-    
-    aperturas = obtener_aperturas_notas()
-    if aperturas:
-        df_ap = pd.DataFrame(aperturas, columns=["ID", "Nivel", "Estado", "Municipio", "Aula", "Tipo Prog.", "Programa", "Semestre", "Abierto", "F. Apertura", "F. Cierre", "Abierto Por"])
-        df_ap["Abierto"] = df_ap["Abierto"].map({1: "✅ Sí", 0: "❌ No"})
-        df_ap["Nivel"] = df_ap["Nivel"].map({"nacional": "🌍 Nacional", "estadal": "🏛️ Estadal", "municipal": "🏘️ Municipal", "plantel": "🏫 Plantel"})
-        st.dataframe(df_ap, use_container_width=True, hide_index=True)
-        
-        # Exportar a Excel
-        buffer_excel = BytesIO()
-        with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
-            df_ap.to_excel(writer, sheet_name="Aperturas", index=False)
-        buffer_excel.seek(0)
+elif menu == "📧 Configuración de Correo":
+    mostrar_header("📧 Configuración de Correo", "Configure el envío de notificaciones por correo")
+
+    tab_smtp, tab_plantilla = st.tabs(["📮 Servidor SMTP", "✉️ Plantilla de Correo"])
+
+    with tab_smtp:
+        smtp = cargar_smtp_config()
+        st.info("Para Gmail, use una **Contraseña de Aplicación** (no su contraseña normal). "
+                "Actíve la verificación en 2 pasos y genere una clave de aplicación.")
+        with st.form("form_smtp"):
+            servidor = st.text_input("Servidor SMTP", value=smtp.get("servidor", "smtp.gmail.com"))
+            puerto = st.number_input("Puerto", value=int(smtp.get("puerto", 587)), step=1)
+            correo_remitente = st.text_input("Correo remitente", value=smtp.get("correo_remitente", ""))
+            clave_app = st.text_input("Contraseña de aplicación", value=smtp.get("clave_app", ""), type="password")
+            usar_tls = st.checkbox("Usar TLS", value=smtp.get("usar_tls", True))
+            if st.form_submit_button("💾 Guardar Configuración", use_container_width=True, type="primary"):
+                guardar_smtp_config({
+                    "servidor": servidor.strip(),
+                    "puerto": int(puerto),
+                    "correo_remitente": correo_remitente.strip(),
+                    "clave_app": clave_app.strip(),
+                    "usar_tls": usar_tls
+                })
+                st.success("✅ Configuración de correo guardada.")
+
+    with tab_plantilla:
+        plantillas = cargar_plantillas_correo()
+        pl = plantillas.get("registro_expediente", {
+            "asunto": "Registro de Expediente - UNEM",
+            "cuerpo": ("Estimado(a) {nombres} {apellidos},\n\n"
+                       "Su expediente ha sido registrado exitosamente en el sistema UNEM.\n\n"
+                       "Cédula: {cedula}\n"
+                       "Programa: {programa}\n"
+                       "Tipo de expediente: {tipo_expediente}\n\n"
+                       "Adjunto encontrará el PDF de su expediente.\n\n"
+                       "Saludos cordiales,\nEquipo UNEM")
+        })
+        st.caption("Puede usar estas variables en el texto: {nombres}, {apellidos}, {cedula}, "
+                   "{estado}, {municipio}, {programa}, {tipo_programa}, {tipo_expediente}")
+        with st.form("form_plantilla"):
+            asunto_pl = st.text_input("Asunto del correo", value=pl["asunto"])
+            cuerpo_pl = st.text_area("Cuerpo del correo", value=pl["cuerpo"], height=280)
+            if st.form_submit_button("💾 Guardar Plantilla", use_container_width=True, type="primary"):
+                guardar_plantilla_correo("registro_expediente", asunto_pl, cuerpo_pl)
+                st.success("✅ Plantilla guardada.")
+
+# ============================================================
+# PÁGINA: RESPALDO DE DATOS
+# ============================================================
+
+elif menu == "📥 Respaldo de Datos":
+    mostrar_header("📥 Respaldo de Datos", "Descargue copias de seguridad del sistema")
+
+    df = obtener_expedientes()
+
+    st.subheader("📊 Respaldo en Excel")
+    st.caption("Descarga todos los expedientes en un archivo Excel, con una columna por cada dato.")
+
+    if df.empty:
+        st.info("📋 Aún no hay expedientes para respaldar.")
+    else:
+        # Excel: una columna por campo, con nombres claros (sin la ruta interna del PDF)
+        columnas_excel = {
+            "id": "N°",
+            "estado": "ESTADO",
+            "municipio": "MUNICIPIO",
+            "aula_taller": "AULA TALLER",
+            "nombres": "NOMBRES",
+            "apellidos": "APELLIDOS",
+            "cedula": "CÉDULA",
+            "correo_titular": "CORREO ELECTRÓNICO",
+            "tipo_programa": "TIPO DE PROGRAMA",
+            "programa": "PROGRAMA",
+            "tipo_expediente": "TIPO DE EXPEDIENTE",
+            "observaciones": "OBSERVACIONES",
+            "registrado_por": "REGISTRADO POR",
+            "fecha_registro": "FECHA DE REGISTRO",
+        }
+        df_excel = df.drop(columns=["pdf_path"], errors="ignore").rename(columns=columnas_excel)
+        orden = [v for v in columnas_excel.values() if v in df_excel.columns]
+        df_excel = df_excel[orden]
+
+        buffer_xlsx = BytesIO()
+        with pd.ExcelWriter(buffer_xlsx, engine="openpyxl") as writer:
+            df_excel.to_excel(writer, index=False, sheet_name="Expedientes")
+        buffer_xlsx.seek(0)
+
         st.download_button(
-            label="📊 Descargar Aperturas en Excel",
-            data=buffer_excel.getvalue(),
-            file_name=f"Aperturas_Notas_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            label="📊 Descargar Respaldo en Excel",
+            data=buffer_xlsx,
+            file_name=f"Respaldo_Expedientes_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_download_aperturas"
+            use_container_width=True,
         )
-    else:
-        st.info("No hay registros de apertura/cierre de notas.")
 
-
-# ============================================================
-# PÁGINA: ELIMINAR REGISTRO
-# ============================================================
-
-def pagina_eliminar_registro():
-    st.title("🗑️ Eliminar Registro de Estudiante")
     st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info.get("usuario") or st.session_state.user_info.get("username", "admin")
-    
-    if rol == 3:
-        st.warning("⚠️ Su nivel (Nivel 3 - Secretaría Situada) no puede eliminar registros directamente.")
-        st.info("💡 Debe solicitar autorización. Los usuarios Nivel 1 o Nivel 2 aprobarán o rechazarán su solicitud.")
-        
-        st.markdown("### 📝 Solicitar Autorización de Eliminación")
-        
-        cedula_el = st.text_input("Cédula del estudiante a eliminar", placeholder="Ej: V-12.345.678", key="el_ced_n3")
-        motivo_el = st.text_area("Motivo de la eliminación *", placeholder="Ej: Registro duplicado, estudiante retirado, error de registro...", key="el_motivo_n3")
-        
-        if st.button("📨 Enviar Solicitud de Autorización", type="primary", key="btn_sol_elim_n3"):
-            if not cedula_el or not motivo_el:
-                st.error("❌ Todos los campos son obligatorios.")
-            else:
-                # Buscar ID del estudiante por cédula
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("SELECT id FROM estudiantes WHERE cedula = ?", (cedula_el,))
-                est_row = c.fetchone()
-                conn.close()
-                est_id = est_row[0] if est_row else None
-                
-                crear_solicitud_autorizacion(
-                    tipo_solicitud="eliminacion",
-                    solicitado_por=usuario,
-                    cedula_solicitante=cedula_el,
-                    rol_solicitante=rol,
-                    estudiante_id=est_id,
-                    estudiante_cedula=cedula_el,
-                    motivo=motivo_el
-                )
-                st.success("✅ Solicitud de autorización enviada exitosamente.")
-                st.info("📌 Un usuario Nivel 1 o Nivel 2 revisará su solicitud. Consulte el estado en la página 📋 Autorizaciones.")
+
+    st.subheader("🗂️ Respaldo de PDFs (todos los expedientes)")
+    st.caption("Descarga un único archivo comprimido (ZIP) con todos los PDFs. "
+               "Cada PDF se nombra con la cédula del titular.")
+
+    if df.empty:
+        st.info("📋 Aún no hay PDFs para respaldar.")
     else:
-        st.info(f"💡 Su nivel ({'Nivel 1 - Admin Principal' if rol == 1 else 'Nivel 2 - Secretaría General'}) puede eliminar registros directamente.")
-        
-        st.markdown("### 🔍 Buscar Estudiante a Eliminar")
-        
-        cedula_el = st.text_input("Cédula del estudiante", placeholder="Ej: V-12.345.678", key="el_ced_n12")
-        
-        if st.button("🔍 Buscar", key="btn_buscar_elim"):
-            if not cedula_el:
-                st.error("❌ Ingrese una cédula.")
-            else:
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("SELECT id, cedula, apellidos, nombres, programa, semestre, estado, municipio, aula_taller FROM estudiantes WHERE cedula = ?", (cedula_el,))
-                est = c.fetchone()
-                conn.close()
-                
-                if est:
-                    st.session_state["est_encontrado_elim"] = est
-                else:
-                    st.error("❌ No se encontró ningún estudiante con esa cédula.")
-                    st.session_state.pop("est_encontrado_elim", None)
-        
-        est = st.session_state.get("est_encontrado_elim")
-        if est:
-            est_id = est[0]
-            st.markdown("#### 📋 Datos del Estudiante")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Cédula:** {est[1]}")
-                st.markdown(f"**Apellidos:** {est[2]}")
-                st.markdown(f"**Nombres:** {est[3]}")
-                st.markdown(f"**Programa:** {est[4]}")
-            with col2:
-                st.markdown(f"**Semestre:** {est[5]}")
-                st.markdown(f"**Estado:** {est[6]}")
-                st.markdown(f"**Municipio:** {est[7]}")
-                st.markdown(f"**Aula:** {est[8]}")
-            
-            st.markdown("---")
-            motivo_el = st.text_area("Motivo de la eliminación *", placeholder="Ej: Registro duplicado, estudiante retirado, error de registro...", key="el_motivo_n12")
-            
-            confirmar = st.checkbox(f"✅ Confirmo que deseo ELIMINAR el registro de **{est[3]} {est[2]}** (C.I: {est[1]})", key="el_confirm_n12")
-            
-            if st.button("🗑️ Eliminar Registro", type="primary", key="btn_elim_directo"):
-                if not motivo_el:
-                    st.error("❌ El motivo es obligatorio.")
-                elif not confirmar:
-                    st.error("❌ Debe confirmar la eliminación marcando el checkbox.")
-                else:
-                    exito, msg = eliminar_estudiante(est_id, usuario, rol, motivo_el, tipo_eliminacion="directa")
-                    if exito:
-                        st.success(f"✅ {msg}")
-                        st.session_state.pop("est_encontrado_elim", None)
+        pdfs_disponibles = df[df["pdf_path"].notna()]
+        total_pdfs = 0
+        buffer_zip = BytesIO()
+        nombres_usados = {}
+        with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            for _, row in pdfs_disponibles.iterrows():
+                ruta = row["pdf_path"]
+                if ruta and os.path.exists(ruta):
+                    cedula_limpia = str(row["cedula"]).replace("/", "-").replace("\\", "-").strip()
+                    nombre_base = f"{cedula_limpia}.pdf"
+                    # Evitar sobrescribir si hubiera cédulas repetidas
+                    if nombre_base in nombres_usados:
+                        nombres_usados[nombre_base] += 1
+                        nombre_base = f"{cedula_limpia}_{nombres_usados[nombre_base]}.pdf"
                     else:
-                        st.error(f"❌ {msg}")
+                        nombres_usados[nombre_base] = 1
+                    zf.write(ruta, arcname=nombre_base)
+                    total_pdfs += 1
+        buffer_zip.seek(0)
 
-
-# ============================================================
-# PÁGINA: AUTORIZACIONES
-# ============================================================
-
-def pagina_autorizaciones():
-    st.title("📋 Gestión de Autorizaciones")
-    st.markdown("---")
-    
-    rol = st.session_state.user_rol
-    usuario = st.session_state.user_info["usuario"]
-    
-    if rol == 3:
-        # NIVEL 3: Solo puede ver sus solicitudes
-        st.info("💡 Aquí puede consultar el estado de sus solicitudes de autorización.")
-        
-        # Obtener todas y filtrar por solicitante
-        todas_sol = obtener_solicitudes_autorizacion()
-        mis_sol = [s for s in todas_sol if s[2] == usuario]  # columna 2 = solicitado_por
-        
-        if mis_sol:
-            st.markdown("### 📋 Mis Solicitudes")
-            # Columnas: id, tipo, solicitado_por, cedula_solicitante, rol_solicitante, est_id, est_cedula, motivo, estado, aprobado_por, f_sol, f_rev
-            df_sol = pd.DataFrame(mis_sol, columns=["ID", "Tipo", "Solicitante", "Cédula Solic.", "Rol", "Est.ID", "Cédula Est.", "Motivo", "Estado", "Revisado Por", "Fecha Solicitud", "Fecha Revisión"])
-            df_sol["Estado"] = df_sol["Estado"].map({"Pendiente": "⏳ Pendiente", "Aprobada": "✅ Aprobada", "Rechazada": "❌ Rechazada"})
-            # Mostrar columnas clave
-            df_display = df_sol[["ID", "Cédula Est.", "Motivo", "Tipo", "Estado", "Revisado Por", "Fecha Solicitud", "Fecha Revisión"]]
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-        else:
-            st.info("No ha enviado solicitudes de autorización.")
-    else:
-        # NIVEL 1 y 2: Pueden aprobar/rechazar solicitudes
-        st.info(f"💡 Su nivel ({'Nivel 1 - Admin Principal' if rol == 1 else 'Nivel 2 - Secretaría General'}) le permite aprobar o rechazar solicitudes de autorización.")
-        
-        tab_pend, tab_todas, tab_elim, tab_reporte = st.tabs(["⏳ Pendientes", "📋 Todas", "🗑️ Eliminaciones", "📊 Reporte Excel"])
-        
-        # TAB: Pendientes
-        with tab_pend:
-            st.subheader("⏳ Solicitudes Pendientes")
-            pendientes = obtener_solicitudes_autorizacion(estado_filtro="Pendiente")
-            
-            if pendientes:
-                for sol in pendientes:
-                    # Columnas: id, tipo, solicitado_por, cedula_solicitante, rol_solicitante, est_id, est_cedula, motivo, estado, aprobado_por, f_sol, f_rev
-                    sol_id, tipo_sol, sol_por, ced_sol, rol_sol, est_id, est_ced, motivo, estado_sol, aprob_por, f_sol, f_rev = sol
-                    with st.expander(f"Solicitud #{sol_id} - {tipo_sol.title()} - {est_ced} (por {sol_por})", expanded=False):
-                        st.markdown(f"**Cédula Estudiante:** {est_ced}")
-                        st.markdown(f"**Solicitante:** {sol_por}")
-                        st.markdown(f"**Rol Solicitante:** Nivel {rol_sol}")
-                        st.markdown(f"**Tipo:** {tipo_sol.title()}")
-                        st.markdown(f"**Motivo:** {motivo}")
-                        st.markdown(f"**Fecha Solicitud:** {f_sol}")
-                        st.markdown(f"**Estado:** ⏳ Pendiente")
-                        
-                        col_apr, col_rec = st.columns(2)
-                        with col_apr:
-                            if st.button(f"✅ Aprobar #{sol_id}", key=f"btn_apr_{sol_id}"):
-                                responder_solicitud_autorizacion(sol_id, True, usuario)
-                                
-                                if tipo_sol == "eliminacion" and est_id:
-                                    exito, msg = eliminar_estudiante(est_id, sol_por, rol_sol, motivo, tipo_eliminacion="autorizada", solicitud_id=sol_id)
-                                    if exito:
-                                        st.success(f"✅ Solicitud #{sol_id} aprobada. {msg}")
-                                    else:
-                                        st.warning(f"⚠️ Solicitud aprobada, pero no se pudo eliminar el registro: {msg}")
-                                else:
-                                    st.success(f"✅ Solicitud #{sol_id} aprobada exitosamente.")
-                                st.rerun()
-                        with col_rec:
-                            if st.button(f"❌ Rechazar #{sol_id}", key=f"btn_rec_{sol_id}"):
-                                responder_solicitud_autorizacion(sol_id, False, usuario)
-                                st.success(f"✅ Solicitud #{sol_id} rechazada.")
-                                st.rerun()
-            else:
-                st.info("No hay solicitudes pendientes.")
-        
-        # TAB: Todas
-        with tab_todas:
-            st.subheader("📋 Todas las Solicitudes")
-            todas = obtener_solicitudes_autorizacion()
-            
-            if todas:
-                df_todas = pd.DataFrame(todas, columns=["ID", "Tipo", "Solicitante", "Cédula Solic.", "Rol", "Est.ID", "Cédula Est.", "Motivo", "Estado", "Revisado Por", "Fecha Solicitud", "Fecha Revisión"])
-                df_todas["Estado"] = df_todas["Estado"].map({"Pendiente": "⏳ Pendiente", "Aprobada": "✅ Aprobada", "Rechazada": "❌ Rechazada"})
-                df_display = df_todas[["ID", "Cédula Est.", "Solicitante", "Motivo", "Tipo", "Estado", "Revisado Por", "Fecha Solicitud", "Fecha Revisión"]]
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay solicitudes registradas.")
-        
-        # TAB: Eliminaciones
-        with tab_elim:
-            st.subheader("🗑️ Registro de Eliminaciones")
-            eliminaciones = obtener_eliminaciones()
-            
-            if eliminaciones:
-                # Columnas: id, est_cedula, est_nombre, eliminado_por, rol_eliminador, motivo, tipo_eliminacion, solicitud_id, fecha_eliminacion
-                df_el = pd.DataFrame(eliminaciones, columns=["ID", "Cédula", "Nombre Completo", "Eliminado Por", "Rol Elim.", "Motivo", "Tipo Elim.", "Solicitud ID", "Fecha Eliminación"])
-                st.dataframe(df_el, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay registros de eliminaciones.")
-        
-        # TAB: Reporte Excel
-        with tab_reporte:
-            st.subheader("📊 Descargar Reporte Completo")
-            st.info("💡 Descargue un reporte Excel con todas las autorizaciones y eliminaciones registradas en el sistema.")
-            
-            todas_sol = obtener_solicitudes_autorizacion()
-            todas_elim = obtener_eliminaciones()
-            
-            buffer_excel = BytesIO()
-            with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
-                # Hoja de Autorizaciones
-                cols_aut = ["ID", "Tipo", "Solicitante", "Cédula Solic.", "Rol Solic.", "Est.ID", "Cédula Est.", "Motivo", "Estado", "Aprobado Por", "Fecha Solicitud", "Fecha Revisión"]
-                if todas_sol:
-                    df_s = pd.DataFrame(todas_sol, columns=cols_aut)
-                    df_s["Estado"] = df_s["Estado"].map({"Pendiente": "Pendiente", "Aprobada": "Aprobada", "Rechazada": "Rechazada"})
-                    df_s.to_excel(writer, sheet_name="Autorizaciones", index=False)
-                else:
-                    pd.DataFrame(columns=cols_aut).to_excel(writer, sheet_name="Autorizaciones", index=False)
-                
-                # Hoja de Eliminaciones
-                cols_elim = ["ID", "Cédula", "Nombre Completo", "Eliminado Por", "Rol Elim.", "Motivo", "Tipo Elim.", "Solicitud ID", "Fecha Eliminación"]
-                if todas_elim:
-                    df_e = pd.DataFrame(todas_elim, columns=cols_elim)
-                    df_e.to_excel(writer, sheet_name="Eliminaciones", index=False)
-                else:
-                    pd.DataFrame(columns=cols_elim).to_excel(writer, sheet_name="Eliminaciones", index=False)
-            
-            buffer_excel.seek(0)
+        if total_pdfs > 0:
+            st.success(f"📄 Se prepararon **{total_pdfs}** PDFs para descargar.")
             st.download_button(
-                label="📊 Descargar Reporte de Autorizaciones y Eliminaciones",
-                data=buffer_excel.getvalue(),
-                file_name=f"Reporte_Autorizaciones_Eliminaciones_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="btn_download_reporte_aut"
-            )
-
-
-# ============================================================
-# PÁGINA: VERIFICAR EXPEDIENTE ETAPA 1
-# ============================================================
-
-def pagina_verificar_etapa1():
-    st.title("🔎 Verificar Expediente Etapa 1")
-    st.markdown("---")
-    
-    st.info("💡 Consulte expedientes registrados en Etapa 1 (solo lectura). Cruce referencia por cédula.")
-    
-    cedula_buscar = st.text_input("Cédula a buscar en Etapa 1", placeholder="Ej: V-12.345.678")
-    
-    if st.button("🔍 Buscar en Etapa 1", key="btn_etapa1"):
-        if not cedula_buscar:
-            st.warning("⚠️ Ingrese una cédula.")
-            return
-        
-        datos, error = consultar_expediente_etapa1(cedula_buscar)
-        
-        if datos:
-            st.success("✅ Expediente encontrado en Etapa 1:")
-            for campo, valor in datos.items():
-                st.markdown(f"**{campo}:** {valor}")
-        elif error:
-            st.error(f"❌ {error}")
-        else:
-            st.warning("⚠️ No se encontró expediente en Etapa 1.")
-
-
-
-# ============================================================
-# PÁGINA: RESPALDO Y EXPORTACIÓN
-# ============================================================
-
-def pagina_respaldo_exportacion():
-    st.title("💾 Respaldo y Exportación")
-    st.markdown("---")
-    st.info("💡 Desde aquí puede descargar copias de seguridad de la base de datos, exportar registros a Excel, y restaurar respaldos anteriores. Se recomienda hacer un respaldo **diario**.")
-    
-    rol = st.session_state.user_rol
-    
-    # ---- SECCIÓN 1: DESCARGAR BASE DE DATOS COMPLETA ----
-    st.subheader("📥 Descargar Base de Datos")
-    st.markdown("Descargue el archivo completo de la base de datos (`.db`) para respaldarlo en su disco externo u otro lugar seguro.")
-    
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
-        st.markdown("**📂 Etapa 2 — Base actual**")
-        if os.path.exists(DB_FILE):
-            tamano_db = os.path.getsize(DB_FILE)
-            tamano_mb = tamano_db / (1024 * 1024)
-            st.caption(f"Archivo: `{DB_FILE}` — Tamaño: {tamano_mb:.2f} MB")
-            
-            with open(DB_FILE, "rb") as f:
-                db_bytes = f.read()
-            
-            st.download_button(
-                label="📥 Descargar Base Etapa 2 (.db)",
-                data=db_bytes,
-                file_name=f"{DB_FILE}",
-                mime="application/octet-stream",
-                key="btn_download_db_etapa2"
+                label="🗂️ Descargar Todos los PDFs (ZIP)",
+                data=buffer_zip,
+                file_name=f"PDFs_Expedientes_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+                mime="application/zip",
+                use_container_width=True,
             )
         else:
-            st.warning("⚠️ No se encontró la base de datos de Etapa 2.")
-    
-    with col_b:
-        st.markdown("**📂 Etapa 1 — Base anterior**")
-        if os.path.exists(DB_FILE_ETAPA1):
-            tamano_db1 = os.path.getsize(DB_FILE_ETAPA1)
-            tamano_mb1 = tamano_db1 / (1024 * 1024)
-            st.caption(f"Archivo: `{DB_FILE_ETAPA1}` — Tamaño: {tamano_mb1:.2f} MB")
-            
-            with open(DB_FILE_ETAPA1, "rb") as f:
-                db1_bytes = f.read()
-            
-            st.download_button(
-                label="📥 Descargar Base Etapa 1 (.db)",
-                data=db1_bytes,
-                file_name=f"{DB_FILE_ETAPA1}",
-                mime="application/octet-stream",
-                key="btn_download_db_etapa1"
-            )
-        else:
-            st.warning("⚠️ No se encontró la base de datos de Etapa 1. Coloque `expedientes.db` en la misma carpeta de la app.")
-    
-    st.markdown("---")
-    
-    # ---- SECCIÓN 2: EXPORTAR A EXCEL ----
-    st.subheader("📊 Exportar Registros a Excel")
-    st.markdown("Exporte todos los registros a archivos Excel (`.xlsx`) para abrirlos en Excel, Google Sheets, etc.")
-    
-    # Seleccionar qué exportar
-    exportar_opciones = st.multiselect(
-        "Seleccione qué tablas exportar:",
-        ["Estudiantes", "Notas", "Certificaciones", "Usuarios", "Almacenes", "Configuración de Listas"],
-        default=["Estudiantes", "Notas", "Certificaciones"],
-        key="multi_export"
-    )
-    
-    if st.button("📊 Generar archivo Excel", key="btn_export_excel"):
-        if not exportar_opciones:
-            st.warning("⚠️ Seleccione al menos una tabla para exportar.")
-            return
-        
-        conn = sqlite3.connect(DB_FILE)
-        output = BytesIO()
-        
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for tabla in exportar_opciones:
-                tabla_map = {
-                    "Estudiantes": "estudiantes",
-                    "Notas": "notas",
-                    "Certificaciones": "certificaciones",
-                    "Usuarios": "usuarios",
-                    "Almacenes": "almacenes",
-                    "Configuración de Listas": "config_listas"
-                }
-                tabla_sql = tabla_map[tabla]
-                
-                try:
-                    df = pd.read_sql_query(f"SELECT * FROM {tabla_sql}", conn)
-                    
-                    # Para usuarios, ocultar la columna de claves por seguridad
-                    if tabla_sql == "usuarios" and "clave" in df.columns:
-                        df = df.drop(columns=["clave"])
-                    
-                    df.to_excel(writer, sheet_name=tabla, index=False)
-                except Exception as e:
-                    st.error(f"❌ Error al exportar {tabla}: {e}")
-        
-        conn.close()
-        excel_bytes = output.getvalue()
-        
-        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-        nombre_archivo = f"Expedientes_UNEM_Export_{fecha_hoy}.xlsx"
-        
-        st.success(f"✅ Archivo Excel generado con {len(exportar_opciones)} hoja(s).")
-        st.download_button(
-            label="📥 Descargar Excel (.xlsx)",
-            data=excel_bytes,
-            file_name=nombre_archivo,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_download_excel"
-        )
-    
-    st.markdown("---")
-    
-    # ---- SECCIÓN 3: RESTAURAR RESPALDO (Solo Admin) ----
-    if rol == "Admin Principal":
-        st.subheader("📤 Restaurar Respaldo de Base de Datos")
-        st.markdown("⚠️ **CUIDADO:** Al restaurar un respaldo, **se reemplazará** la base de datos actual con la versión que suba. Los datos registrados después del respaldo se perderán.")
-        
-        uploaded_db = st.file_uploader(
-            "Subir archivo de respaldo (.db)",
-            type=["db"],
-            key="upload_restore_db"
-        )
-        
-        if uploaded_db is not None:
-            st.warning(f"📁 Archivo recibido: `{uploaded_db.name}` — {uploaded_db.size / 1024:.1f} KB")
-            
-            confirmar = st.checkbox(
-                "☑️ Confirmo que deseo RESTAURAR este respaldo y reemplazar la base actual",
-                key="chk_confirm_restore"
-            )
-            
-            if st.button("📤 Restaurar Base de Datos", key="btn_restore_db", disabled=not confirmar):
-                try:
-                    # Guardar respaldo de la base actual antes de reemplazar
-                    backup_nombre = f"{DB_FILE}.previo_a_restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    if os.path.exists(DB_FILE):
-                        import shutil
-                        shutil.copy2(DB_FILE, backup_nombre)
-                        st.info(f"📋 Se guardó copia de la base actual como: `{backup_nombre}`")
-                    
-                    # Escribir la nueva base
-                    with open(DB_FILE, "wb") as f:
-                        f.write(uploaded_db.getbuffer())
-                    
-                    st.success("✅ ¡Base de datos restaurada exitosamente! Recargue la página para ver los cambios.")
-                    st.info("💡 Haga clic en el botón ↻ (Recargar) del navegador o presione F5.")
-                except Exception as e:
-                    st.error(f"❌ Error al restaurar: {e}")
-    
-    st.markdown("---")
-    
-    # ---- SECCIÓN 4: INFORMACIÓN ----
-    st.subheader("📋 Información del Sistema")
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    info_tablas = ["estudiantes", "notas", "certificaciones", "usuarios", "almacenes", "config_listas", "aperturas_notas"]
-    
-    for tabla in info_tablas:
-        try:
-            c.execute(f"SELECT COUNT(*) FROM {tabla}")
-            count = c.fetchone()[0]
-            st.markdown(f"- **{tabla}:** {count} registro(s)")
-        except:
-            pass
-    
-    conn.close()
-    
-    # Fecha del último registro
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("SELECT MAX(fecha_registro) FROM estudiantes")
-        ultima_fecha = c.fetchone()[0]
-        if ultima_fecha:
-            st.markdown(f"\n📅 **Último estudiante registrado:** {ultima_fecha}")
-    except:
-        pass
-    conn.close()
-    
-    st.caption("💡 Recomendación: haga un respaldo diario descargando la base de datos (.db) y guárdela en su disco externo de 1 TB.")
-
-
-
-# ============================================================
-# MAIN - EJECUCIÓN PRINCIPAL
-# ============================================================
-
-if not st.session_state.get("logged_in", False):
-    mostrar_login()
-else:
-    pagina = mostrar_sidebar()
-    
-    if pagina == "📊 Dashboard":
-        pagina_dashboard()
-    elif pagina == "📝 Registrar Estudiante":
-        pagina_registrar_estudiante()
-    elif pagina == "🔍 Consultar Expediente":
-        pagina_consultar_expediente()
-    elif pagina == "📖 Cargar Notas":
-        pagina_cargar_notas()
-    elif pagina == "📄 Certificaciones":
-        pagina_certificaciones()
-    elif pagina == "📋 Listado de Estudiantes":
-        pagina_listado_estudiantes()
-    elif pagina == "👥 Gestión de Usuarios":
-        pagina_gestion_usuarios()
-    elif pagina == "🏫 Gestión de Almacenes":
-        pagina_gestion_almacenes()
-    elif pagina == "⚙️ Configuración de Listas":
-        pagina_config_listas()
-    elif pagina == "🔓 Apertura/Cierre de Notas":
-        pagina_apertura_notas()
-    elif pagina == "🗑️ Eliminar Registro":
-        pagina_eliminar_registro()
-    elif pagina == "📋 Autorizaciones":
-        pagina_autorizaciones()
-    elif pagina == "🔎 Verificar Expediente Etapa 1":
-        pagina_verificar_etapa1()
-    elif pagina == "💾 Respaldo y Exportación":
-        pagina_respaldo_exportacion()
-    elif pagina == "🚪 Cerrar Sesión":
-        st.session_state.logged_in = False
-        st.session_state.user_info = None
-        st.session_state.user_rol = None
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+            st.info("📋 No se encontraron archivos PDF guardados en el sistema.")
