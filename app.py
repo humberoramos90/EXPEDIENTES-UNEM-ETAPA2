@@ -508,6 +508,34 @@ TIPOS_PROGRAMA_PROGRAMAS = {
     ],
 }
 
+# CÓDIGOS DE PROGRAMA (aparecen al consultar la malla y serán la base del
+# futuro módulo de emisión de Registros de Título). Mapa NOMBRE -> CÓDIGO.
+# Solo se pre-cargan los códigos CONFIRMADOS. Los que quedan en "" (vacío)
+# el administrador los completa desde "⚙️ Configuración de Listas" > Códigos.
+# Al sembrar en la base se pueden editar sin tocar el código fuente.
+CODIGOS_PROGRAMA = {
+    # --- PNF (Licenciaturas / Profesor) ---
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN BIOLOGÍA": "PBIO",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA": "LEFI",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS": "LEJA",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN FÍSICA": "PFIS",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GEOGRAFÍA, HISTORIA Y CIUDADANÍA": "LGHC",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN INGLÉS": "LING",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN LENGUA": "LLEN",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MATEMÁTICA": "PMAT",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA": "LPRI",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL": "LINI",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA": "PQUI",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL": "LESP",
+    "PROFESOR/A DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL": "PMTP",
+    # Pendientes de confirmar (códigos LGIA / LGIM / LIDI / LINP / LINM):
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN ADMINISTRACIÓN Y GESTIÓN ESCOLAR": "",
+    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GESTIÓN Y MANTENIMIENTO DEL AMBIENTE ESCOLAR": "",
+    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL": "",
+    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA": "",
+    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA": "",
+}
+
 TIPOS_EXPEDIENTE = ["INGRESO", "PROSECUCION", "EGRESADO"]
 
 ROLES = ["ADMIN_PRINCIPAL", "ADMIN_AUXILIAR", "ADMIN_REGIONAL"]
@@ -758,6 +786,51 @@ def init_database():
         # Dejar el sello para no volver a borrar en el futuro
         c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
                   ("meta", "version_programas", VERSION_PROGRAMAS))
+
+    # ------------------------------------------------------------
+    # MIGRACIÓN EN CASCADA de correcciones de programas (etapa final).
+    # Renombra / elimina / agrega programas y ACTUALIZA TODOS los módulos:
+    # la lista de los menús, las mallas, los expedientes y las notas.
+    # Idempotente: se ejecuta una sola vez por sello de versión.
+    # ------------------------------------------------------------
+    VERSION_CASCADA = "programas_cascade_v3"
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='meta' AND categoria_padre='cascada_programas' AND valor=?",
+              (VERSION_CASCADA,))
+    if c.fetchone()[0] == 0:
+        # 1) RENOMBRAR (con cascada a los cuatro sitios donde vive el nombre)
+        _renombrar = {
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MEMORIA, TERRITORIO Y CIUDADANÍA":
+                "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
+        }
+        for _old, _new in _renombrar.items():
+            c.execute("UPDATE listas_editables SET valor=? WHERE tipo_lista='programa' AND valor=?", (_new, _old))
+            c.execute("UPDATE mallas SET programa=? WHERE programa=?", (_new, _old))
+            c.execute("UPDATE expedientes SET programa=? WHERE programa=?", (_new, _old))
+            c.execute("UPDATE notas SET programa=? WHERE programa=?", (_new, _old))
+        # 2) ELIMINAR programas que fueron un error (solo de la lista y su malla;
+        #    NO se borran expedientes/notas de estudiantes por seguridad).
+        _eliminar = ["LICENCIADO/A EN EDUCACIÓN, MENCIÓN DESARROLLO INSTITUCIONAL"]
+        for _prog in _eliminar:
+            c.execute("DELETE FROM listas_editables WHERE tipo_lista='programa' AND valor=?", (_prog,))
+            c.execute("DELETE FROM mallas WHERE programa=?", (_prog,))
+        # 3) AGREGAR programas nuevos a la lista de su tipo
+        _agregar = [("PNF", "PROFESOR/A DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL")]
+        for _tipo, _prog in _agregar:
+            c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                      ("programa", _tipo, _prog))
+        c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                  ("meta", "cascada_programas", VERSION_CASCADA))
+
+    # ------------------------------------------------------------
+    # CÓDIGOS DE PROGRAMA: se siembran una vez y quedan EDITABLES en la base
+    # (tipo_lista='codigo_programa', categoria_padre=nombre_programa, valor=código).
+    # ------------------------------------------------------------
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='codigo_programa'")
+    if c.fetchone()[0] == 0:
+        for _prog, _cod in CODIGOS_PROGRAMA.items():
+            if str(_cod or "").strip():
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("codigo_programa", _prog, _cod))
 
     # Plantilla de correo por defecto
     c.execute("SELECT COUNT(*) FROM plantillas_correo")
@@ -1299,6 +1372,67 @@ def obtener_lista_editable(tipo_lista, categoria_padre=None):
     datos = [row[0] for row in c.fetchall()]
     conn.close()
     return datos
+
+
+def obtener_codigo_programa(programa):
+    """Devuelve el código del programa (ej. 'LGHC') o '' si no está definido."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT valor FROM listas_editables WHERE tipo_lista='codigo_programa' AND categoria_padre=? LIMIT 1",
+              (str(programa or ""),))
+    r = c.fetchone()
+    conn.close()
+    return (r[0] if r else "") or ""
+
+
+def obtener_codigos_programa():
+    """Devuelve un dict {programa: codigo} de todos los códigos definidos."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT categoria_padre, valor FROM listas_editables WHERE tipo_lista='codigo_programa'")
+    r = {row[0]: (row[1] or "") for row in c.fetchall()}
+    conn.close()
+    return r
+
+
+def guardar_codigo_programa(programa, codigo):
+    """Crea o actualiza el código de un programa (editable por el administrador)."""
+    programa = str(programa or "").strip()
+    codigo = str(codigo or "").strip().upper()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM listas_editables WHERE tipo_lista='codigo_programa' AND categoria_padre=?", (programa,))
+    if codigo:
+        c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                  ("codigo_programa", programa, codigo))
+    conn.commit()
+    conn.close()
+
+
+def renombrar_programa_cascada(nombre_viejo, nombre_nuevo):
+    """Renombra un programa y ACTUALIZA todos los módulos enlazados:
+    la lista de los menús, las mallas, los expedientes, las notas y el código.
+    Devuelve un dict con el conteo de filas afectadas por tabla."""
+    nombre_viejo = str(nombre_viejo or "").strip()
+    nombre_nuevo = str(nombre_nuevo or "").strip()
+    if not nombre_viejo or not nombre_nuevo or nombre_viejo == nombre_nuevo:
+        return {}
+    conn = get_db()
+    c = conn.cursor()
+    afectados = {}
+    c.execute("UPDATE listas_editables SET valor=? WHERE tipo_lista='programa' AND valor=?", (nombre_nuevo, nombre_viejo))
+    afectados["lista"] = c.rowcount
+    c.execute("UPDATE listas_editables SET categoria_padre=? WHERE tipo_lista='codigo_programa' AND categoria_padre=?", (nombre_nuevo, nombre_viejo))
+    afectados["codigo"] = c.rowcount
+    c.execute("UPDATE mallas SET programa=? WHERE programa=?", (nombre_nuevo, nombre_viejo))
+    afectados["mallas"] = c.rowcount
+    c.execute("UPDATE expedientes SET programa=? WHERE programa=?", (nombre_nuevo, nombre_viejo))
+    afectados["expedientes"] = c.rowcount
+    c.execute("UPDATE notas SET programa=? WHERE programa=?", (nombre_nuevo, nombre_viejo))
+    afectados["notas"] = c.rowcount
+    conn.commit()
+    conn.close()
+    return afectados
 
 
 def agregar_valor_lista(tipo_lista, categoria_padre, valor):
@@ -2942,23 +3076,40 @@ def _parsear_datos_cedula(texto):
         out["cedula_tipo"] = m.group(1)
         out["cedula_num"] = re.sub(r"\D", "", m.group(2))
     # --- Sexo (M / F) para autocompletar el género ---
-    # La cédula trae el campo SEXO con una "M" o "F". Se intenta de tres formas,
-    # de la más fiable a la menos fiable, porque el OCR a veces daña la etiqueta.
+    # La cédula trae el campo SEXO con una "M" o "F". El OCR a veces daña la
+    # etiqueta o la letra, así que se intenta por varias vías, de la más fiable
+    # a la menos fiable. Se evita confundir la "F" de FIRMA o la "M" de otras
+    # palabras exigiendo que la letra esté aislada o junto al rótulo SEXO.
     up_txt = txt.upper()
+    _lineas = [l.strip(" .:-|\t") for l in up_txt.split("\n")]
     if "FEMENINO" in up_txt:
         out["sexo"] = "F"
     elif "MASCULINO" in up_txt:
         out["sexo"] = "M"
     else:
-        ms = re.search(r"SEX[O0][:\s\-]*([MF])\b", up_txt)
+        # (1) 'SEXO F' / 'SEXO: M' / 'SEX0-F' en la misma línea (tolerante a OCR).
+        ms = re.search(r"SEX[O0Q][^A-Z0-9]{0,4}([MFEH])\b", up_txt)
         if ms:
-            out["sexo"] = ms.group(1)
+            _c = ms.group(1)
+            out["sexo"] = {"E": "F", "H": "M"}.get(_c, _c)  # OCR: E→F, H→M
         else:
-            for l in up_txt.split("\n"):
-                t = l.strip(" .:-|")
-                if t in ("M", "F"):
-                    out["sexo"] = t
-                    break
+            # (2) La letra M/F sola en la línea siguiente al rótulo SEXO.
+            for i, l in enumerate(_lineas):
+                if re.search(r"SEX[O0Q]", l):
+                    for j in range(i, min(i + 3, len(_lineas))):
+                        cand = _lineas[j].replace("SEXO", "").strip(" .:-|")
+                        mm = re.search(r"\b([MF])\b", cand)
+                        if mm:
+                            out["sexo"] = mm.group(1)
+                            break
+                    if out.get("sexo"):
+                        break
+            # (3) Última opción: una línea que sea SOLO 'M' o 'F'.
+            if not out.get("sexo"):
+                for t in _lineas:
+                    if t in ("M", "F"):
+                        out["sexo"] = t
+                        break
 
     # --- Nombres y apellidos ---
     # En la cédula venezolana los APELLIDOS van encima de los NOMBRES y ambos
@@ -4513,10 +4664,12 @@ elif menu == "📝 Registrar Expediente":
                                 st.session_state.reg_sexo = "MASCULINO"
                             _leidos = [k for k in ("cedula_num", "primer_nombre", "primer_apellido", "sexo") if _datos.get(k)]
                             if _leidos:
-                                st.success(
-                                    "Datos leídos y colocados en el formulario de abajo. "
-                                    "**Revíselos y corrija lo que haga falta** antes de registrar."
-                                )
+                                _msg_ok = ("Datos leídos y colocados en el formulario de abajo. "
+                                           "**Revíselos y corrija lo que haga falta** antes de registrar.")
+                                if not _datos.get("sexo"):
+                                    _msg_ok += (" ⚠️ No se pudo leer el **SEXO/GÉNERO**; "
+                                                "selecciónelo a mano (es clave para redactar el título).")
+                                st.success(_msg_ok)
                             else:
                                 st.warning(
                                     "No se pudo reconocer automáticamente los datos. "
@@ -5149,7 +5302,13 @@ elif menu == "🧮 Mallas Curriculares":
         prog_malla = st.selectbox("🎓 Programa", progs_m, key="malla_prog")
 
     st.markdown("---")
-    st.subheader(f"📖 Materias de: {prog_malla}")
+    _cod_malla = obtener_codigo_programa(prog_malla)
+    if _cod_malla:
+        st.subheader(f"📖 Materias de: {prog_malla}  ·  Código: {_cod_malla}")
+    else:
+        st.subheader(f"📖 Materias de: {prog_malla}")
+        st.caption("ℹ️ Este programa aún no tiene **código** asignado. Configúrelo en "
+                   "'⚙️ Configuración de Listas' > pestaña **Códigos de programa**.")
 
     malla_actual = obtener_malla(prog_malla, incluir_introductorio=True)
     if malla_actual:
@@ -5395,7 +5554,8 @@ elif menu == "📝 Registro de Calificaciones":
                                f"pero como Administrador Principal usted puede cargar de todas formas.")
             # Régimen del programa (semestral / trimestral) según sus períodos por año
             _reg_txt = _regimen_programa(prog_e)
-            st.markdown(f"**Programa:** {prog_e}")
+            _cod_e = obtener_codigo_programa(prog_e)
+            st.markdown(f"**Programa:** {prog_e}" + (f"  ·  **Código:** {_cod_e}" if _cod_e else ""))
             st.caption(f"Régimen del programa: **{_reg_txt}**")
             malla_e = obtener_malla(prog_e, incluir_introductorio=True)
             # Recorrido TSU: se le reconocen los trayectos 1 y 2, por lo que la
@@ -6029,6 +6189,42 @@ elif menu == "⚙️ Configuración de Listas":
                 st.error("❌ Ese programa ya existe en la lista.")
         else:
             st.warning("⚠️ Escriba el nombre del programa.")
+
+    # -------- CÓDIGOS DE PROGRAMA --------
+    st.markdown("---")
+    st.subheader("🔤 Códigos de programa")
+    st.caption("El código aparece al consultar la malla y será la base del futuro módulo "
+               "de emisión de Registros de Título. Escriba el código de cada programa y guarde.")
+    _progs_cod = obtener_lista_editable("programa", tipo_sel) or predeterminados
+    _codigos_now = obtener_codigos_programa()
+    _df_cod = pd.DataFrame([{"Programa": p, "Código": _codigos_now.get(p, "")} for p in _progs_cod])
+    _df_cod_ed = st.data_editor(_df_cod, hide_index=True, use_container_width=True,
+                                disabled=["Programa"], key=f"cod_editor_{tipo_sel}")
+    if st.button("💾 Guardar códigos", type="primary", key=f"btn_cod_{tipo_sel}"):
+        for _, _r in _df_cod_ed.iterrows():
+            guardar_codigo_programa(_r["Programa"], _r["Código"])
+        st.success("✅ Códigos guardados.")
+        st.rerun()
+
+    # -------- RENOMBRAR PROGRAMA EN CASCADA --------
+    st.markdown("---")
+    st.subheader("✏️ Renombrar / corregir un programa (actualiza todos los módulos)")
+    st.caption("Cambia el nombre a la vez en: la lista de los menús, las mallas, los "
+               "expedientes, las notas y el código. Úselo para no romper certificados.")
+    _progs_ren = obtener_lista_editable("programa", tipo_sel) or predeterminados
+    if _progs_ren:
+        _viejo = st.selectbox("Programa a renombrar", _progs_ren, key=f"ren_old_{tipo_sel}")
+        _nuevo = st.text_input("Nuevo nombre exacto", key=f"ren_new_{tipo_sel}")
+        if st.button("🔁 Renombrar en cascada", key=f"btn_ren_{tipo_sel}"):
+            if _nuevo.strip():
+                _af = renombrar_programa_cascada(_viejo, _nuevo.strip().upper())
+                st.success("✅ Renombrado. Actualizado en → lista: {l}, mallas: {m}, "
+                           "expedientes: {e}, notas: {n}.".format(
+                               l=_af.get("lista", 0), m=_af.get("mallas", 0),
+                               e=_af.get("expedientes", 0), n=_af.get("notas", 0)))
+                st.rerun()
+            else:
+                st.warning("⚠️ Escriba el nuevo nombre.")
 
 # ============================================================
 # PÁGINA: AULAS TALLER (carga masiva anclada a estado + municipio)
