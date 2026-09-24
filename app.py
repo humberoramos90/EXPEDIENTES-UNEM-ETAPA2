@@ -445,95 +445,139 @@ AULAS_OFICIALES = {
 
 
 TIPOS_PROGRAMA_PROGRAMAS = {
+    # 1) PNF: Licenciaturas y Profesorados (18 programas)
     "PNF": [
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN BIOLOGÍA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN FÍSICA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN INGLÉS",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN LENGUA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MATEMÁTICA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN ADMINISTRACIÓN Y GESTIÓN ESCOLAR",
-        "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GESTIÓN Y MANTENIMIENTO DEL AMBIENTE ESCOLAR",
-        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL",
-        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA",
-        "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA",
-        "PROFESOR/A DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+        "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE MATEMÁTICA",
+        "PROFESORA O PROFESOR EN EL ÁREA DE FÍSICA",
+        "PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA",
+        "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE BIOLOGÍA",
+        "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN FÍSICA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN EN LENGUAS EXTRANJERAS MENCIÓN INGLÉS",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN MEDIA EN LENGUA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN INICIAL",
+        "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: ADMINISTRACIÓN Y GESTIÓN ESCOLAR",
+        "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: MANTENIMIENTO DE AMBIENTES ESCOLARES",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN PRIMARIA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN INICIAL",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN PRIMARIA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN MEDIA",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN DE JOVENES ADULTAS Y ADULTOS",
+        "LICENCIADA O LICENCIADO EN EDUCACIÓN ESPECIAL",
     ],
-    "PNFA_E": [
+    # 2) PNFA-E: Especializaciones (22 programas)
+    "PNFA-E": [
         "ESPECIALIZACIÓN EN EDUCACIÓN INICIAL",
         "ESPECIALIZACIÓN EN EDUCACIÓN PRIMARIA",
         "ESPECIALIZACIÓN EN EDUCACIÓN EN CIENCIAS NATURALES",
-        "ESPECIALIZACIÓN EN MATEMÁTICA",
-        "ESPECIALIZACIÓN EN LENGUA Y COMUNICACIÓN",
-        "ESPECIALIZACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
-        "ESPECIALIZACIÓN EN LENGUA EXTRANJERA: INGLÉS",
+        "ESPECIALIZACIÓN EDUCACIÓN MATEMÁTICA",
+        "ESPECIALIZACIÓN EDUCACIÓN EN LENGUA Y COMUNICACIÓN",
+        "ESPECIALIZACIÓN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
+        "ESPECIALIZACIÓN EN LENGUAS EXTRANJERAS: INGLÉS",
         "ESPECIALIZACIÓN EN EDUCACIÓN FÍSICA",
-        "ESPECIALIZACIÓN EN EDUCACIÓN EN AGROECOLOGÍA",
-        "ESPECIALIZACIÓN EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
-        "ESPECIALIZACIÓN EN DERECHO DE NIÑOS, NIÑAS Y ADOLESCENTES, CONVIVENCIA SOLIDARIA Y PAZ",
-        "ESPECIALIZACIÓN EN EDUCACIÓN Y TECNOLOGÍA DE LA INFORMACIÓN Y COMUNICACIÓN",
+        "ESPECIALIZACIÓN EDUCACIÓN EN AGROECOLOGÍA",
+        "ESPECIALISTA EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
+        "ESPECIALIZACIÓN EN DERECHOS DE LOS NIÑOS, NIÑAS Y ADOLESCENTES CONVIVENCIA SOLIDARIA Y PAZ",
+        "ESPECIALIZACIÓN EDUCACIÓN Y TECNOLOGÍA DE LA INFORMACIÓN Y COMUNICACIÓN",
         "ESPECIALIZACIÓN EN EDUCACIÓN Y TRABAJO",
         "ESPECIALIZACIÓN EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA",
         "ESPECIALIZACIÓN EN EDUCACIÓN ESPECIAL",
-        "ESPECIALIZACIÓN EN LENGUA EXTRANJERA INGLÉS PARA PRIMARIA",
-        "ESPECIALIZACIÓN EN EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
-        "ESPECIALIZACIÓN EN EDUCACIÓN EN FRONTERAS",
-        "ESPECIALIZACIÓN EN EDUCACIÓN INDÍGENA",
-        "ESPECIALIZACIÓN EN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS",
-        "ESPECIALIZACIÓN EN PROMOCIÓN DE LA LECTURA Y LITERATURA INFANTIL",
-        "ESPECIALIZACIÓN EN EDUCACIÓN DE LA SEXUALIDAD",
+        "ESPECIALIZACIÓN EN LENGUAS EXTRANJERAS INGLÉS PARA EDUCACIÓN PRIMARIA",
+        "ESPECIALISTA EN EDUCACIÓN INDÍGENA",
+        "ESPECIALISTA EN EDUCACIÓN EN FRONTERA",
+        "ESPECIALISTA EN EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+        "ESPECIALISTA EN EDUCACIÓN Y PEDAGOGÍAS AFROVENEZOLANAS",
+        "ESPECIALISTA EN EDUCACIÓN INTEGRAL DE LA SEXUALIDAD",
+        "ESPECIALISTA EN EDUCACIÓN DE JOVENES, ADULTAS Y ADULTOS",
     ],
-    "PNFA_M": [
+    # 3) PNFA-M: Maestrías y Magíster (13 programas)
+    "PNFA-M": [
         "MAESTRÍA EN EDUCACIÓN INICIAL",
-        "MAESTRÍA EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
         "MAESTRÍA EN EDUCACIÓN PRIMARIA",
+        "MAESTRÍA EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA",
         "MAESTRÍA EN CIENCIAS NATURALES PARA EDUCACIÓN MEDIA",
-        "MAESTRÍA EN MATEMÁTICA PARA EDUCACIÓN MEDIA",
+        "MAESTRÍA EN MATEMÁTICAS PARA EDUCACIÓN MEDIA",
         "MAESTRÍA EN LENGUA Y COMUNICACIÓN PARA EDUCACIÓN MEDIA",
         "MAESTRÍA EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA PARA EDUCACIÓN MEDIA",
         "MAESTRÍA EN INGLÉS PARA EDUCACIÓN MEDIA",
         "MAESTRÍA EN EDUCACIÓN FÍSICA PARA EDUCACIÓN MEDIA",
-        "MAESTRÍA EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA",
-        "MAESTRÍA EN EDUCACIÓN EN FRONTERAS",
-        "MAESTRÍA EN EDUCACIÓN INDÍGENA",
+        "MAGÍSTER EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD",
+        "MAGÍSTER EN EDUCACIÓN INDÍGENA",
+        "MAGÍSTER EN EDUCACIÓN EN FRONTERA",
+        "MAGÍSTER EN EDUCACIÓN Y PEDAGOGÍAS AFROVENEZOLANAS",
     ],
-    "PNFA_D": [
-        "DOCTOR(A) EN EDUCACIÓN",
+    # 4) PNFA-D: Doctorado (1 programa)
+    "PNFA-D": [
+        "DOCTORADO EN EDUCACIÓN",
     ],
 }
 
 # CÓDIGOS DE PROGRAMA (aparecen al consultar la malla y serán la base del
 # futuro módulo de emisión de Registros de Título). Mapa NOMBRE -> CÓDIGO.
 # Solo se pre-cargan los códigos CONFIRMADOS. Los que quedan en "" (vacío)
-# el administrador los completa desde "⚙️ Configuración de Listas" > Códigos.
+# el administrador los completa desde "⚙️ Configuración de Programas" > Códigos.
 # Al sembrar en la base se pueden editar sin tocar el código fuente.
 CODIGOS_PROGRAMA = {
-    # --- PNF (Licenciaturas / Profesor) ---
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN BIOLOGÍA": "PBIO",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA": "LEFI",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS": "LEJA",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN FÍSICA": "PFIS",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GEOGRAFÍA, HISTORIA Y CIUDADANÍA": "LGHC",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN INGLÉS": "LING",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN LENGUA": "LLEN",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MATEMÁTICA": "PMAT",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA": "LPRI",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL": "LINI",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA": "PQUI",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL": "LESP",
-    "PROFESOR/A DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL": "PMTP",
-    # Pendientes de confirmar (códigos LGIA / LGIM / LIDI / LINP / LINM):
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN ADMINISTRACIÓN Y GESTIÓN ESCOLAR": "",
-    "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GESTIÓN Y MANTENIMIENTO DEL AMBIENTE ESCOLAR": "",
-    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL": "",
-    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA": "",
-    "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA": "",
+    # --- PNF: Profesorados ---
+    "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE MATEMÁTICA": "PMAT",
+    "PROFESORA O PROFESOR EN EL ÁREA DE FÍSICA": "PFIS",
+    "PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA": "PQUI",
+    "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE BIOLOGÍA": "PBIO",
+    "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL": "PMTP",
+    # --- PNF: Licenciaturas ---
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA": "LGHC",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN FÍSICA": "LEFI",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN EN LENGUAS EXTRANJERAS MENCIÓN INGLÉS": "LING",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN MEDIA EN LENGUA": "LLEN",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN INICIAL": "LINI",
+    "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: ADMINISTRACIÓN Y GESTIÓN ESCOLAR": "LGIA",
+    "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: MANTENIMIENTO DE AMBIENTES ESCOLARES": "LGIM",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN PRIMARIA": "LPRI",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN INICIAL": "LIDI",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN PRIMARIA": "LINP",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN MEDIA": "LINM",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN DE JOVENES ADULTAS Y ADULTOS": "LEJA",
+    "LICENCIADA O LICENCIADO EN EDUCACIÓN ESPECIAL": "LESP",
+    # --- PNFA-E: Especializaciones ---
+    "ESPECIALIZACIÓN EN EDUCACIÓN INICIAL": "EINI",
+    "ESPECIALIZACIÓN EN EDUCACIÓN PRIMARIA": "EPRI",
+    "ESPECIALIZACIÓN EN EDUCACIÓN EN CIENCIAS NATURALES": "ECIE",
+    "ESPECIALIZACIÓN EDUCACIÓN MATEMÁTICA": "EMAT",
+    "ESPECIALIZACIÓN EDUCACIÓN EN LENGUA Y COMUNICACIÓN": "ELEN",
+    "ESPECIALIZACIÓN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA": "EGHC",
+    "ESPECIALIZACIÓN EN LENGUAS EXTRANJERAS: INGLÉS": "EING",
+    "ESPECIALIZACIÓN EN EDUCACIÓN FÍSICA": "EEFI",
+    "ESPECIALIZACIÓN EDUCACIÓN EN AGROECOLOGÍA": "EAGRO",
+    "ESPECIALISTA EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD": "ECUL",
+    "ESPECIALIZACIÓN EN DERECHOS DE LOS NIÑOS, NIÑAS Y ADOLESCENTES CONVIVENCIA SOLIDARIA Y PAZ": "EDER",
+    "ESPECIALIZACIÓN EDUCACIÓN Y TECNOLOGÍA DE LA INFORMACIÓN Y COMUNICACIÓN": "ETIC",
+    "ESPECIALIZACIÓN EN EDUCACIÓN Y TRABAJO": "ETRB",
+    "ESPECIALIZACIÓN EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA": "EDSE",
+    "ESPECIALIZACIÓN EN EDUCACIÓN ESPECIAL": "EESP",
+    "ESPECIALIZACIÓN EN LENGUAS EXTRANJERAS INGLÉS PARA EDUCACIÓN PRIMARIA": "EIPR",
+    "ESPECIALISTA EN EDUCACIÓN INDÍGENA": "EIND",
+    "ESPECIALISTA EN EDUCACIÓN EN FRONTERA": "EFRO",
+    "ESPECIALISTA EN EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL": "EMTP",
+    "ESPECIALISTA EN EDUCACIÓN Y PEDAGOGÍAS AFROVENEZOLANAS": "EAFR",
+    "ESPECIALISTA EN EDUCACIÓN INTEGRAL DE LA SEXUALIDAD": "EEIS",
+    "ESPECIALISTA EN EDUCACIÓN DE JOVENES, ADULTAS Y ADULTOS": "EEJA",
+    # --- PNFA-M: Maestrías y Magíster ---
+    "MAESTRÍA EN EDUCACIÓN INICIAL": "MINI",
+    "MAESTRÍA EN EDUCACIÓN PRIMARIA": "MPRI",
+    "MAESTRÍA EN DIRECCIÓN Y SUPERVISIÓN EDUCATIVA": "MDSE",
+    "MAESTRÍA EN CIENCIAS NATURALES PARA EDUCACIÓN MEDIA": "MCIE",
+    "MAESTRÍA EN MATEMÁTICAS PARA EDUCACIÓN MEDIA": "MMAT",
+    "MAESTRÍA EN LENGUA Y COMUNICACIÓN PARA EDUCACIÓN MEDIA": "MLEN",
+    "MAESTRÍA EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA PARA EDUCACIÓN MEDIA": "MGHC",
+    "MAESTRÍA EN INGLÉS PARA EDUCACIÓN MEDIA": "MING",
+    "MAESTRÍA EN EDUCACIÓN FÍSICA PARA EDUCACIÓN MEDIA": "MEFI",
+    "MAGÍSTER EN PEDAGOGÍA CULTURAL E INTERCULTURALIDAD": "MCUL",
+    "MAGÍSTER EN EDUCACIÓN INDÍGENA": "MIND",
+    "MAGÍSTER EN EDUCACIÓN EN FRONTERA": "MFRO",
+    "MAGÍSTER EN EDUCACIÓN Y PEDAGOGÍAS AFROVENEZOLANAS": "MAFR",
+    # --- PNFA-D: Doctorado ---
+    "DOCTORADO EN EDUCACIÓN": "DEDU",
 }
 
 TIPOS_EXPEDIENTE = ["INGRESO", "PROSECUCION", "EGRESADO"]
@@ -822,7 +866,86 @@ def init_database():
                   ("meta", "cascada_programas", VERSION_CASCADA))
 
     # ------------------------------------------------------------
-    # CÓDIGOS DE PROGRAMA: se siembran una vez y quedan EDITABLES en la base
+    # MIGRACIÓN EN CASCADA v4: DENOMINACIÓN OFICIAL de programas.
+    # Realinea TODO el catálogo a la denominación oficial (imágenes 4 y 5):
+    #  - Renombra los 18 programas PNF a su nombre oficial (los profesorados de
+    #    Matemática/Física/Química/Biología dejan de ser "Licenciado").
+    #  - Reconstruye la lista completa (54 programas) bajo los 4 tipos:
+    #    PNF, PNFA-E (22 especializaciones), PNFA-M (13 maestrías/magíster),
+    #    PNFA-D (1 doctorado).
+    #  - Reconstruye los códigos de programa (quedan EDITABLES por el Nivel 1).
+    # El renombrado se hace en CASCADA sobre mallas, expedientes, notas y
+    # códigos, así las mallas ya cargadas conservan su contenido y solo
+    # cambian de nombre. Idempotente por sello de versión.
+    # ------------------------------------------------------------
+    VERSION_CASCADA_V4 = "programas_oficiales_v4"
+    c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='meta' AND categoria_padre='cascada_programas' AND valor=?",
+              (VERSION_CASCADA_V4,))
+    if c.fetchone()[0] == 0:
+        # 1) RENOMBRAR los 18 PNF a su denominación oficial, en cascada.
+        _ren4 = {
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN BIOLOGÍA":
+                "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE BIOLOGÍA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN FÍSICA":
+                "PROFESORA O PROFESOR EN EL ÁREA DE FÍSICA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN QUÍMICA":
+                "PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN MATEMÁTICA":
+                "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE MATEMÁTICA",
+            "PROFESOR/A DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL":
+                "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN FÍSICA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GEOGRAFÍA, HISTORIA Y CIUDADANÍA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN INGLÉS":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN EN LENGUAS EXTRANJERAS MENCIÓN INGLÉS",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN LENGUA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN MEDIA EN LENGUA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN INICIAL":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN INICIAL",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN PRIMARIA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN PRIMARIA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN ADMINISTRACIÓN Y GESTIÓN ESCOLAR":
+                "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: ADMINISTRACIÓN Y GESTIÓN ESCOLAR",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN GESTIÓN Y MANTENIMIENTO DEL AMBIENTE ESCOLAR":
+                "LICENCIADA O LICENCIADO EN GESTIÓN INSTITUCIONAL MENCIÓN: MANTENIMIENTO DE AMBIENTES ESCOLARES",
+            "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN INICIAL":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN INICIAL",
+            "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN PRIMARIA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN PRIMARIA",
+            "LICENCIATURA EN EDUCACIÓN INDÍGENA MENCIÓN EDUCACIÓN MEDIA":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN INDÍGENA: MENCIÓN MEDIA",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN DE JOVENES ADULTAS Y ADULTOS",
+            "LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN ESPECIAL":
+                "LICENCIADA O LICENCIADO EN EDUCACIÓN ESPECIAL",
+        }
+        for _old, _new in _ren4.items():
+            c.execute("UPDATE mallas SET programa=? WHERE programa=?", (_new, _old))
+            c.execute("UPDATE expedientes SET programa=? WHERE programa=?", (_new, _old))
+            c.execute("UPDATE notas SET programa=? WHERE programa=?", (_new, _old))
+            c.execute("UPDATE listas_editables SET categoria_padre=? WHERE tipo_lista='codigo_programa' AND categoria_padre=?", (_new, _old))
+        # 2) RECONSTRUIR la lista oficial de programas (54) con sus 4 tipos.
+        c.execute("DELETE FROM listas_editables WHERE tipo_lista='programa'")
+        for _tipo, _progs in TIPOS_PROGRAMA_PROGRAMAS.items():
+            for _p in _progs:
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("programa", _tipo, _p))
+        # 3) RECONSTRUIR los códigos de programa (editables luego por el Nivel 1).
+        c.execute("DELETE FROM listas_editables WHERE tipo_lista='codigo_programa'")
+        for _p, _cod in CODIGOS_PROGRAMA.items():
+            if str(_cod or "").strip():
+                c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                          ("codigo_programa", _p, _cod))
+        # 4) Normalizar el tipo del expediente de prueba (claves con guion).
+        for _oldk, _newk in (("PNFA_E", "PNFA-E"), ("PNFA_M", "PNFA-M"), ("PNFA_D", "PNFA-D")):
+            c.execute("UPDATE expedientes SET tipo_programa=? WHERE tipo_programa=?", (_newk, _oldk))
+        c.execute("INSERT OR IGNORE INTO listas_editables (tipo_lista, categoria_padre, valor) VALUES (?, ?, ?)",
+                  ("meta", "cascada_programas", VERSION_CASCADA_V4))
+
+    # ------------------------------------------------------------
+    # CÓDIGOS DE PROGRAMA (siembra inicial en BD nueva; quedan EDITABLES).
     # (tipo_lista='codigo_programa', categoria_padre=nombre_programa, valor=código).
     # ------------------------------------------------------------
     c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='codigo_programa'")
@@ -2946,33 +3069,49 @@ def _fecha_larga_es(dt=None):
 
 
 def titulo_por_genero(programa, sexo):
-    """Devuelve el título/grado redactado según el género del titular.
+    """Devuelve el TÍTULO/GRADO que se emite, redactado según el género.
+    Regla oficial (confirmada por el usuario):
+      - El título es LITERAL: la denominación del programa tal cual, en MAYÚSCULA.
+      - Solo cambia el género en las formas que lo tienen:
+          * PNF: 'PROFESORA O PROFESOR ...' -> PROFESORA / PROFESOR
+                 'LICENCIADA O LICENCIADO ...' -> LICENCIADA / LICENCIADO
+          * PNFA-D: 'DOCTORADO EN ...' -> DOCTORA EN / DOCTOR EN
+      - PNFA-E (Especialización/Especialista) y PNFA-M (Maestría/Magíster)
+        NO se transforman: se emiten exactamente como se llama el programa
+        (Maestría != Magíster, Especialización != Especialista).
     sexo: 'F'/'FEMENINO' -> forma femenina; cualquier otro valor -> masculino.
-    Ej.: 'LICENCIADO/A EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'
-         -> Femenino: 'LICENCIADA EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'
-         -> Masculino: 'LICENCIADO EN EDUCACIÓN, MENCIÓN EDUCACIÓN FÍSICA'"""
+    """
     p = (programa or "").strip()
     up = p.upper()
     fem = str(sexo or "").upper().startswith("F")
+    # --- PNF: Profesorados ---
+    if up.startswith("PROFESORA O PROFESOR"):
+        base = "PROFESORA" if fem else "PROFESOR"
+        return (base + p[len("PROFESORA O PROFESOR"):]).upper()
+    # --- PNF: Licenciaturas ---
+    if up.startswith("LICENCIADA O LICENCIADO"):
+        base = "LICENCIADA" if fem else "LICENCIADO"
+        return (base + p[len("LICENCIADA O LICENCIADO"):]).upper()
+    # --- PNFA-D: Doctorado (el programa se llama 'DOCTORADO EN ...', el título
+    #     se emite como DOCTORA/DOCTOR EN ... según el género) ---
+    if up.startswith("DOCTORADO EN"):
+        base = "DOCTORA EN" if fem else "DOCTOR EN"
+        return (base + p[len("DOCTORADO EN"):]).upper()
+    # --- Compatibilidad con nombres antiguos (por si quedara algún registro) ---
     if up.startswith("LICENCIADO/A"):
         base = "LICENCIADA" if fem else "LICENCIADO"
-        return base + p[len("LICENCIADO/A"):]
+        return (base + p[len("LICENCIADO/A"):]).upper()
     if up.startswith("LICENCIATURA EN"):
         base = "LICENCIADA EN" if fem else "LICENCIADO EN"
-        return base + p[len("LICENCIATURA EN"):]
-    if up.startswith("DOCTOR(A)"):
-        base = "DOCTORA" if fem else "DOCTOR"
-        return base + p[len("DOCTOR(A)"):]
-    if up.startswith("ESPECIALIZACIÓN EN"):
-        # El título profesional es 'ESPECIALISTA EN ...' (igual en ambos géneros)
-        return "ESPECIALISTA EN" + p[len("ESPECIALIZACIÓN EN"):]
-    if up.startswith("MAESTRÍA EN"):
-        # El grado académico es 'MAGÍSTER EN ...' (igual en ambos géneros)
-        return "MAGÍSTER EN" + p[len("MAESTRÍA EN"):]
+        return (base + p[len("LICENCIATURA EN"):]).upper()
     if up.startswith("PROFESOR/A"):
         base = "PROFESORA" if fem else "PROFESOR"
-        return base + p[len("PROFESOR/A"):]
-    return p
+        return (base + p[len("PROFESOR/A"):]).upper()
+    if up.startswith("DOCTOR(A)"):
+        base = "DOCTORA" if fem else "DOCTOR"
+        return (base + p[len("DOCTOR(A)"):]).upper()
+    # PNFA-E y PNFA-M y cualquier otro: literal, en mayúscula.
+    return up
 
 
 # ------------------------------------------------------------
@@ -4358,7 +4497,7 @@ with st.sidebar:
             "📥 Carga Masiva (Excel)",
             "📈 Estadísticas",
             "👥 Gestión de Usuarios",
-            "⚙️ Configuración de Listas",
+            "⚙️ Configuración de Programas",
             "🏫 Aulas Taller",
             "📧 Configuración de Correo",
             "📥 Respaldo de Datos",
@@ -5308,7 +5447,7 @@ elif menu == "🧮 Mallas Curriculares":
     else:
         st.subheader(f"📖 Materias de: {prog_malla}")
         st.caption("ℹ️ Este programa aún no tiene **código** asignado. Configúrelo en "
-                   "'⚙️ Configuración de Listas' > pestaña **Códigos de programa**.")
+                   "'⚙️ Configuración de Programas' > pestaña **Códigos de programa**.")
 
     malla_actual = obtener_malla(prog_malla, incluir_introductorio=True)
     if malla_actual:
@@ -6150,8 +6289,8 @@ elif menu == "👥 Gestión de Usuarios":
 # PÁGINA: CONFIGURACIÓN DE LISTAS
 # ============================================================
 
-elif menu == "⚙️ Configuración de Listas":
-    mostrar_header("⚙️ Configuración de Listas", "Administre los programas de cada tipo")
+elif menu == "⚙️ Configuración de Programas":
+    mostrar_header("⚙️ Configuración de Programas", "Administre los programas, sus códigos y las mallas de cada tipo")
 
     st.info("Aquí puede agregar o quitar programas dentro de cada Tipo de Programa. "
             "Si no agrega ninguno, el sistema usa la lista oficial predeterminada.")
