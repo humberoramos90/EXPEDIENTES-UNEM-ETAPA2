@@ -1,0 +1,15 @@
+streamlit
+pandas
+openpyxl
+reportlab
+pypdf
+
+# --- Opcional: lectura de la cedula por foto/PDF (OCR) ---
+# El autocompletado desde la cedula es OPCIONAL. Si estas librerias no estan
+# instaladas, la aplicacion funciona igual y solo se desactiva esa ayuda.
+# Ademas de estas librerias, el OCR requiere el programa Tesseract instalado
+# en el sistema (paquete 'tesseract-ocr'); sin el, el registro manual sigue
+# funcionando normalmente.
+Pillow
+pytesseract
+PyMuPDF
