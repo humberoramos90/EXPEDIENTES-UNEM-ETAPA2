@@ -11,5 +11,11 @@ pypdf
 # en el sistema (paquete 'tesseract-ocr'); sin el, el registro manual sigue
 # funcionando normalmente.
 Pillow
+streamlit
+pandas
+openpyxl
+reportlab
+qrcode
+Pillow
 pytesseract
 PyMuPDF
