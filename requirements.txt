@@ -1,9 +1,0 @@
-streamlit
-pandas
-openpyxl
-reportlab
-pypdf
-PyMuPDF
-qrcode
-Pillow
-python-barcode
