@@ -3,6 +3,7 @@ pandas
 openpyxl
 reportlab
 pypdf
+qrcode
 
 # --- Opcional: lectura de la cedula por foto/PDF (OCR) ---
 # El autocompletado desde la cedula es OPCIONAL. Si estas librerias no estan
