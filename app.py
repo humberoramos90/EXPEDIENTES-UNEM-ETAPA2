@@ -460,6 +460,7 @@ TIPOS_PROGRAMA_PROGRAMAS = {
         "PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA",
         "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE BIOLOGÍA",
         "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL",
+        "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL MENCIÓN AGROPECUARIA",
         "LICENCIADA O LICENCIADO EN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA",
         "LICENCIADA O LICENCIADO EN EDUCACIÓN FÍSICA",
         "LICENCIADA O LICENCIADO EN EDUCACIÓN EN LENGUAS EXTRANJERAS MENCIÓN INGLÉS",
@@ -533,6 +534,7 @@ CODIGOS_PROGRAMA = {
     "PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA": "PQUI",
     "PROFESORA O PROFESOR DE EDUCACIÓN EN EL ÁREA DE BIOLOGÍA": "PBIO",
     "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL": "PMTP",
+    "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL MENCIÓN AGROPECUARIA": "PMTPA",
     # --- PNF: Licenciaturas ---
     "LICENCIADA O LICENCIADO EN EDUCACIÓN EN GEOGRAFÍA, HISTORIA Y CIUDADANÍA": "LGHC",
     "LICENCIADA O LICENCIADO EN EDUCACIÓN FÍSICA": "LEFI",
@@ -4460,6 +4462,61 @@ _MALLAS_FORMATO_GRADO = {
         (12, 4, 'Cuarto Trayecto', 'EDUCACIÓN FÍSICA, DEPORTE Y RECREACIÓN', 4.0),
         (12, 4, 'Cuarto Trayecto', 'EL CUERPO, LA EMOCIONALIDAD, LA AFECTIVIDAD Y LA LÚDICA EN LOS PROCESOS DE ENSEÑANZA Y APRENDIZAJE', 4.0),
     ],
+    'PROFESORA O PROFESOR EN EL ÁREA DE FÍSICA': [
+        (1, 1, 'Primer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA I.', 7.0),
+        (1, 1, 'Primer Trayecto', 'TEORÍA SOCIAL DEL APRENDIZAJE: PEDAGOGÍA Y DIDÁCTICA CRÍTICA EN CIENCIA.', 2.0),
+        (1, 1, 'Primer Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FÍSICA I.A', 2.0),
+        (1, 1, 'Primer Trayecto', 'MATEMÁTICA I.', 2.0),
+        (1, 1, 'Primer Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS I.A INTEGRACIÓN DE LAS CIENCIAS NATURALES I', 3.0),
+        (2, 1, 'Primer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA II.', 7.0),
+        (2, 1, 'Primer Trayecto', 'PLANIFICACIÓN EDUCATIVA POR PROYECTO.', 2.0),
+        (2, 1, 'Primer Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FÍSICA I.B.', 2.0),
+        (2, 1, 'Primer Trayecto', 'MATEMÁTICA II.', 2.0),
+        (2, 1, 'Primer Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS I.B INTEGRACIÓN DE LAS CIENCIAS NATURALES II', 3.0),
+        (3, 1, 'Primer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA III.', 7.0),
+        (3, 1, 'Primer Trayecto', 'EVALUACIÓN Y VALORACIÓN DE LOS APRENDIZAJES.', 2.0),
+        (3, 1, 'Primer Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FÍSICA I.C.', 2.0),
+        (3, 1, 'Primer Trayecto', 'MATEMÁTICA III.', 2.0),
+        (3, 1, 'Primer Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS I.C INTEGRACIÓN DE LAS CIENCIAS NATURALES III', 3.0),
+        (4, 2, 'Segundo Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA IV.', 7.0),
+        (4, 2, 'Segundo Trayecto', 'USO CRÍTICO DE LAS TIC.', 2.0),
+        (4, 2, 'Segundo Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FÍSICA II.A.', 2.0),
+        (4, 2, 'Segundo Trayecto', 'FÍSICA Y ENTORNO SOCIAL.', 2.0),
+        (4, 2, 'Segundo Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS II.A INTEGRACIÓN DE LAS CIENCIAS NATURALES IV', 3.0),
+        (5, 2, 'Segundo Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA V.', 7.0),
+        (5, 2, 'Segundo Trayecto', 'NECESIDADES EDUCATIVAS E INTEGRACIÓN DE ESTUDIANTES CON DISCAPACIDAD.', 2.0),
+        (5, 2, 'Segundo Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FISICA II.B.', 2.0),
+        (5, 2, 'Segundo Trayecto', 'CULTURA Y ECOLOGÍA SOCIAL', 2.0),
+        (5, 2, 'Segundo Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS II.B INTEGRACIÓN DE LAS CIENCIAS NATURALES V', 3.0),
+        (6, 2, 'Segundo Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA VI.', 7.0),
+        (6, 2, 'Segundo Trayecto', 'EDUCACIÓN PARA LA PAZ Y PARA LA VIDA.', 2.0),
+        (6, 2, 'Segundo Trayecto', 'ELEMENTOS TEÓRICO PRÁCTICOS DE LA FISICA II. C.', 2.0),
+        (6, 2, 'Segundo Trayecto', 'LABORATORIO: VINCULACIÓN TEÓRICO PRÁCTICOS II.C INTEGRACIÓN DE LAS CIENCIAS NATURALES VI', 3.0),
+        (7, 3, 'Tercer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA VII.', 7.0),
+        (7, 3, 'Tercer Trayecto', 'SEMINARIO: PENSAMIENTO PEDAGÓGICO LIBERADOR NUESTROAMERICANO.', 2.0),
+        (7, 3, 'Tercer Trayecto', 'CIENCIAS NATURALES PARA LA TRANSFORMACIÓN SOCIAL I.', 3.0),
+        (7, 3, 'Tercer Trayecto', 'LABORATORIO PROCESOS DIDÁCTICOS DE LA FÍSICA I.', 3.0),
+        (8, 3, 'Tercer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA VIII.', 7.0),
+        (8, 3, 'Tercer Trayecto', 'DESARROLLO DE LA CIUDADANÍA CRÍTICA.', 2.0),
+        (8, 3, 'Tercer Trayecto', 'CIENCIAS NATURALES PARA LA TRANSFORMACIÓN SOCIAL II.', 3.0),
+        (8, 3, 'Tercer Trayecto', 'LABORATORIO PROCESOS DIDÁCTICOS DE LA FÍSICA II.', 3.0),
+        (9, 3, 'Tercer Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA IX.', 7.0),
+        (9, 3, 'Tercer Trayecto', 'PROCESOS HISTÓRICOS POLÍTICOS DE LA EDUCACIÓN VENEZOLANA NUESTROAMERICANA EN EL SIGLO XXI.', 2.0),
+        (9, 3, 'Tercer Trayecto', 'CIENCIAS NATURALES PARA LA TRANSFORMACIÓN SOCIAL III.', 3.0),
+        (9, 3, 'Tercer Trayecto', 'LABORATORIO PROCESOS DIDÁCTICOS DE LA FÍSICA III.', 3.0),
+        (10, 4, 'Cuarto Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA X.', 7.0),
+        (10, 4, 'Cuarto Trayecto', 'TALLER: METODOLOGÍA IAPT.', 2.0),
+        (10, 4, 'Cuarto Trayecto', 'TALLER: PROCESOS DIDÁCTICOS INTERDISCIPLINARIOS EN FÍSICA', 3.0),
+        (10, 4, 'Cuarto Trayecto', 'LABORATORIO: PROCESOS DE INVESTIGACIÓN, CREACIÓN E INNOVACIÓN EN LAS CIENCIAS NATURALES I.', 4.0),
+        (11, 4, 'Cuarto Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA XI.', 7.0),
+        (11, 4, 'Cuarto Trayecto', 'TALLER: SISTEMATIZACIÓN IAPT.', 2.0),
+        (11, 4, 'Cuarto Trayecto', 'CIENCIAS NATURALES PARA LA TRANSFORMACIÓN SOCIAL IV.', 3.0),
+        (11, 4, 'Cuarto Trayecto', 'LABORATORIO: PROCESOS DE INVESTIGACIÓN, CREACIÓN E INNOVACIÓN EN LAS CIENCIAS NATURALES II.', 4.0),
+        (12, 4, 'Cuarto Trayecto', 'PROYECTO PRÁCTICA DOCENTE TRANSFORMADORA XII.', 7.0),
+        (12, 4, 'Cuarto Trayecto', 'TALLER: PLANIFICACIÓN IAPT.', 2.0),
+        (12, 4, 'Cuarto Trayecto', 'SEMINARIO: PROCESOS SOCIOPRODUCTIVOS: FÍSICA DE NUESTROS DÍAS.', 3.0),
+        (12, 4, 'Cuarto Trayecto', 'CURSO: PRINCIPIOS FÍSICOS APLICADOS A LA PRODUCCIÓN.', 4.0),
+    ],
     'PROFESORA O PROFESOR EN EL ÁREA DE QUÍMICA': [
         (1, 1, 'Primer Trayecto', 'PROYECTO: PRÁCTICA DOCENTE TRANSFORMADORA I.', 7.0),
         (1, 1, 'Primer Trayecto', 'TEORÍA SOCIAL DEL APRENDIZAJE.', 2.0),
@@ -5123,6 +5180,56 @@ _MALLAS_FORMATO_GRADO = {
         (12, 4, 'Cuarto Trayecto', 'RETOS Y PERSPECTIVAS DE LA EDUCACIÓN DE JÓVENES, ADULTOS Y ADULTAS EN VENEZUELA', 4.0),
         (12, 4, 'Cuarto Trayecto', 'SEMINARIO II: TRANSFORMACIÓN DE LA PRÁCTICA PEDAGÓGICA', 4.0),
     ],
+    "PROFESORA O PROFESOR DE EDUCACIÓN MEDIA TÉCNICA Y PROFESIONAL MENCIÓN AGROPECUARIA": [
+        (1, 1, 'Primer Trayecto', 'PROYECTO: EL DOCENTE Y SU CONTEXTO EDUCATIVO I', 3),
+        (1, 1, 'Primer Trayecto', 'SISTEMA EDUCATIVO BOLIVARIANO', 4),
+        (1, 1, 'Primer Trayecto', 'CIENCIAS AGRARIAS EN VENEZUELA Y LATINOAMÉRICA', 3),
+        (1, 1, 'Primer Trayecto', 'MATEMÁTICA APLICADA', 4),
+        (2, 1, 'Primer Trayecto', 'PROYECTO: EL DOCENTE Y SU CONTEXTO EDUCATIVO II', 3),
+        (2, 1, 'Primer Trayecto', 'FILOSOFÍA EDUCATIVA PARA LA TRANSFORMACIÓN', 3),
+        (2, 1, 'Primer Trayecto', 'BOTÁNICA Y FISIOLOGÍA VEGETAL', 4),
+        (2, 1, 'Primer Trayecto', 'FISICOQUÍMICA', 4),
+        (3, 1, 'Primer Trayecto', 'PROYECTO: EL DOCENTE Y SU CONTEXTO EDUCATIVO III', 3),
+        (3, 1, 'Primer Trayecto', 'SOCIOLOGÍA EDUCATIVA PARA LA TRANSFORMACIÓN', 3),
+        (3, 1, 'Primer Trayecto', 'EDAFOLOGÍA', 4),
+        (3, 1, 'Primer Trayecto', 'BIOQUÍMICA', 4),
+        (4, 2, 'Segundo Trayecto', 'PROYECTO:  INVESTIGACIÓN ACCIÓN EN LA PRÁCTICA DOCENTE DE LA EDUCACIÓN MEDIA TÉCNICA I', 3),
+        (4, 2, 'Segundo Trayecto', 'LEGISLACIÓN EDUCATIVA Y LAS LEYES DEL PODER POPULAR', 4),
+        (4, 2, 'Segundo Trayecto', 'AGROECOLOGÍA', 4),
+        (4, 2, 'Segundo Trayecto', 'MICROBIOLOGÍA AGRÍCOLA Y AMBIENTAL', 3),
+        (5, 2, 'Segundo Trayecto', 'PROYECTO:  INVESTIGACIÓN ACCIÓN EN LA PRÁCTICA DOCENTE DE LA EDUCACIÓN MEDIA TÉCNICA II', 3),
+        (5, 2, 'Segundo Trayecto', 'PSICOLOGÍA EDUCATIVA', 4),
+        (5, 2, 'Segundo Trayecto', 'BIOTECNOLOGÍA ANIMAL', 4),
+        (5, 2, 'Segundo Trayecto', 'MECANIZACIÓN AGRICOLA', 3),
+        (6, 2, 'Segundo Trayecto', 'PROYECTO:  INVESTIGACIÓN ACCIÓN EN LA PRÁCTICA DOCENTE DE LA EDUCACIÓN MEDIA TÉCNICA III', 3),
+        (6, 2, 'Segundo Trayecto', 'DIDACTICA DE LA EDUCACIÓN TÉCNICA', 4),
+        (6, 2, 'Segundo Trayecto', 'GENÉTICA Y MEJORAMIENTO VEGETAL-ANIMAL', 4),
+        (6, 2, 'Segundo Trayecto', 'TOPOGRAFÍA, RIESGO Y DRENAJE', 3),
+        (7, 3, 'Tercer Trayecto', 'PROYECTO: TECNOLOGÍA PRODUCTIVA  Y  COMUNALIZACION DE LA PRÁCTICA EDUCATIVA I', 3),
+        (7, 3, 'Tercer Trayecto', 'ÉTICA, DOCENCIA Y DEONTOLOGÍA PROFESIONAL', 3),
+        (7, 3, 'Tercer Trayecto', 'PRODUCCIÓN FRUTAL', 4),
+        (7, 3, 'Tercer Trayecto', 'ADMINISTRACIÓN Y MERCADEO AGRÍCOLA', 4),
+        (8, 3, 'Tercer Trayecto', 'PROYECTO: TECNOLOGÍA PRODUCTIVA  Y  COMUNALIZACION DE LA PRÁCTICA EDUCATIVA II', 3),
+        (8, 3, 'Tercer Trayecto', 'PLANIFICACIÓN POR UNIDADES DE APRENDIZAJE EN LA ENSEÑANZA DE LA EDUCACIÓN MEDIA TÉCNICA', 4),
+        (8, 3, 'Tercer Trayecto', 'PRODUCCIÓN VEGETAL', 4),
+        (8, 3, 'Tercer Trayecto', 'SANIDAD Y PROTECCIÓN VEGETAL/ ANIMAL', 3),
+        (9, 3, 'Tercer Trayecto', 'PROYECTO: TECNOLOGÍA PRODUCTIVA  Y  COMUNALIZACION DE LA PRÁCTICA EDUCATIVA III', 3),
+        (9, 3, 'Tercer Trayecto', 'ESTADISTICA APLICADA', 3),
+        (9, 3, 'Tercer Trayecto', 'PRODUCCIÓN DE CARNE BOVINA', 4),
+        (9, 3, 'Tercer Trayecto', 'INFORMATICA APLICADA A LA PRODUCCIÓN AGRARIA', 4),
+        (10, 4, 'Cuarto Trayecto', 'PROYECTO: LA PRACTICA PEDAGÓGICA PRODUCTIVA A TRAVÉS DE LA INVESTIGACIÓN ACCIÓN PARTICIPATIVA Y TRANSFORMADORA.', 3),
+        (10, 4, 'Cuarto Trayecto', 'PEDAGOGÍA PARA LA TRANSFORMACIÓN DE LA PRACTICA', 4),
+        (10, 4, 'Cuarto Trayecto', 'PRODUCCIÓN LECHERA', 3),
+        (10, 4, 'Cuarto Trayecto', 'ECONOMÍA COMUNAL PARA LA PRODUCCIÓN AGRARIA', 4),
+        (11, 4, 'Cuarto Trayecto', 'PROYECTO: SISTEMATIZACIÓN  DE LA PRÁCTICA Y  LA IAPT', 3),
+        (11, 4, 'Cuarto Trayecto', 'EVALUACIÓN EDUCATIVA EN LA ENSEÑANZA DE LA EDUCACIÓN MEDIA TÉCNICA', 4),
+        (11, 4, 'Cuarto Trayecto', 'PRODUCCIÓN DE FORRAJES', 4),
+        (11, 4, 'Cuarto Trayecto', 'SEMINARIO: PLANIFICACIÓN Y GESTIÓN DE PROYECTOS AGRICOLAS', 3),
+        (12, 4, 'Cuarto Trayecto', 'PROYECTO: SISTEMATIZACIÓN Y SOCIALIZACION DE LA PRACTIVA PEDAGÓGICA PRODUCTIVA.', 3),
+        (12, 4, 'Cuarto Trayecto', 'CULTURA ESCOLAR EN LA EDUCACIÓN TÉCNICA', 3),
+        (12, 4, 'Cuarto Trayecto', 'AGROINDUSTRIALIZACIÓN', 4),
+        (12, 4, 'Cuarto Trayecto', 'FORMULACIÓN Y EVALUACIÓN DE COSTOS PARA LA PRODUCCIÓN AGRÍCOLA', 4),
+    ],
 }
 
 
@@ -5134,7 +5241,7 @@ def _seed_mallas_formato_grado(c):
     repite en arranques posteriores (no pisa ediciones del administrador tras
     sembrar). NO altera los NOMBRES oficiales de programa (que ligan
     certificados y notas); solo fija las unidades curriculares y sus créditos."""
-    VERSION = "mallas_formato_grado_v1"
+    VERSION = "mallas_formato_grado_v2"
     c.execute("SELECT COUNT(*) FROM listas_editables WHERE tipo_lista='meta' AND categoria_padre='mallas_seed' AND valor=?", (VERSION,))
     if c.fetchone()[0] > 0:
         return
@@ -5756,6 +5863,14 @@ def _fg_parse_hoja(ws):
     def find_all_eq(txt):
         return [i for i in range(len(H)) if H[i] == txt]
 
+    def find_all_periodo():
+        # Inicio de cada bloque de notas. Unas hojas rotulan la columna como
+        # "PERIODO" (exacto) y otras como "PERIODO 1", "PERIODO 2"... (p. ej.
+        # el FORMATO de Física). Se aceptan ambos para no perder la malla.
+        import re as _re
+        return [i for i in range(len(H))
+                if H[i] == "PERIODO" or _re.match(r"^PERIODO\s*\d+$", H[i])]
+
     col_ced = find("CEDULA")
     col_pn = find("PRIMER NOMBRE")
     col_sn = find("SEGUNDO NOMBRE")
@@ -5786,7 +5901,7 @@ def _fg_parse_hoja(ws):
         col_cod = find("MALLA", exact=True)
 
     # --- Bloques de unidades curriculares (por cada columna PERIODO) ---
-    periodo_cols = sorted(find_all_eq("PERIODO"))
+    periodo_cols = sorted(find_all_periodo())
     unidades = []  # {col_uc, col_nombre, col_num, col_periodo, trayecto, bloque}
     for bi, p in enumerate(periodo_cols):
         end = periodo_cols[bi + 1] if bi + 1 < len(periodo_cols) else ncols
@@ -8056,15 +8171,22 @@ elif menu == "🧮 Mallas Curriculares":
                    "'⚙️ Configuración de Programas' > pestaña **Códigos de programa**.")
 
     malla_actual = obtener_malla(prog_malla, incluir_introductorio=True)
+    # Encabezado de la columna de período según el RÉGIMEN del programa:
+    #  2 = Semestral -> "Semestre"; 3 = Trimestral -> "Trimestre";
+    #  4 = Cuatrimestral -> "Cuatrimestre". Así el paréntesis refleja lo
+    #  que corresponde en la malla, en vez de un texto fijo.
+    _ppa_malla = _regimen_programa_info(prog_malla)[0]
+    _termino_periodo = {2: "Semestre", 3: "Trimestre", 4: "Cuatrimestre"}.get(int(_ppa_malla or 2), "Semestre")
+    COL_PERIODO = f"Período (Trayecto/{_termino_periodo})"
     if malla_actual:
         df_malla = pd.DataFrame([{
-            "Período (Trayecto/Semestre)": m["periodo"],
+            COL_PERIODO: m["periodo"],
             "Materia": m["materia"],
             "U.C. (créditos)": m["creditos"],
         } for m in malla_actual])
     else:
         df_malla = pd.DataFrame([{
-            "Período (Trayecto/Semestre)": "", "Materia": "", "U.C. (créditos)": 0.0
+            COL_PERIODO: "", "Materia": "", "U.C. (créditos)": 0.0
         }])
 
     st.caption("Edite la tabla directamente. Use el botón ➕ (abajo de la tabla) para agregar filas. "
@@ -8086,7 +8208,7 @@ elif menu == "🧮 Mallas Curriculares":
             if not materia:
                 continue
             filas.append({
-                "periodo": str(r.get("Período (Trayecto/Semestre)", "") or "").strip().upper(),
+                "periodo": str(r.get(COL_PERIODO, "") or "").strip().upper(),
                 "materia": materia,
                 "creditos": r.get("U.C. (créditos)", 0) or 0,
                 "es_introductorio": 0,
