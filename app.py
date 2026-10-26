@@ -4238,14 +4238,18 @@ def generar_plantilla_carga_masiva():
     return bio.getvalue()
 
 
-def procesar_carga_masiva_expedientes(df, usuario):
+def procesar_carga_masiva_expedientes(df, usuario, periodo_egreso=""):
     """Importa la hoja EXPEDIENTES. Devuelve (ok, fallidos, errores[]).
-    Tolerante a fallos: cada fila se procesa aislada."""
+    Tolerante a fallos: cada fila se procesa aislada.
+    'periodo_egreso' es el período de egreso indicado para TODO el archivo;
+    se usa cuando la fila no trae su propio PERIODO CULMINACION."""
     ok = 0
     fallidos = 0
     errores = []
     canon, prog_a_tipo = _cm_mapas_programas()
-    estados_map = {k.upper(): k for k in ESTADOS_MUNICIPIOS}
+    # Mapa de estados tolerante a MAYÚSCULAS/minúsculas y acentos:
+    # "LARA", "lara", "Lara" y "MERIDA"/"Mérida" caen al nombre oficial.
+    estados_map = {_fg_norm_h(k): k for k in ESTADOS_MUNICIPIOS}
 
     def col(row, *nombres):
         for n in nombres:
@@ -4271,7 +4275,7 @@ def procesar_carga_masiva_expedientes(df, usuario):
             if not tipo_in:
                 raise ValueError("No se pudo determinar el TIPO PROGRAMA (revise el nombre del PROGRAMA)")
             estado_in = _cm_norm(col(row, "ESTADO"))
-            estado = estados_map.get(estado_in.upper(), estado_in)
+            estado = estados_map.get(_fg_norm_h(estado_in), estado_in)
             tipo_est = _cm_norm(col(row, "TIPO ESTUDIANTE")).upper()
             tipo_est = "TSU" if tipo_est.startswith("TSU") else ("BACHILLER" if tipo_est.startswith("BACH") else "")
             ppa_raw = _cm_norm(col(row, "PERIODOS POR"))
@@ -4291,7 +4295,7 @@ def procesar_carga_masiva_expedientes(df, usuario):
                 "tipo_programa": tipo_in,
                 "programa": programa,
                 "tipo_expediente": (_cm_norm(col(row, "TIPO EXPEDIENTE")).upper() or "EGRESADO"),
-                "periodo_culminacion": _cm_norm(col(row, "PERIODO CULMINACION", "PERIODO CULMINACI")),
+                "periodo_culminacion": (_cm_norm(col(row, "PERIODO CULMINACION", "PERIODO CULMINACI")) or _cm_norm(periodo_egreso)),
                 "sexo": sexo,
                 "tipo_estudiante": tipo_est,
                 "periodo_inicio": _cm_norm(col(row, "PERIODO INICIO")),
@@ -5050,8 +5054,15 @@ def generar_certificado_pdf(row):
         ppa = 2
     fecha_emision = _fecha_larga_es()
     titulo_grado = titulo_por_genero(programa, sexo)
+    # PERÍODO DE EGRESO (viene del expediente / carga masiva). Es la base del
+    # serial y se muestra en el QR y en el código de barras.
+    egreso = _g("periodo_culminacion")
     _ced_alnum = "".join(ch for ch in cedula if ch.isalnum())
-    serial = str(datetime.now().year) + "-I-" + _ced_alnum
+    if egreso:
+        _egreso_cod = "".join(ch for ch in egreso.upper() if ch.isalnum() or ch in "-")
+        serial = _egreso_cod + "-" + _ced_alnum
+    else:
+        serial = str(datetime.now().year) + "-I-" + _ced_alnum
 
     malla = obtener_malla(programa, incluir_introductorio=False)
     notas = obtener_notas(cedula)
@@ -5080,7 +5091,12 @@ def generar_certificado_pdf(row):
     firma = next((p for p in FIRMA_PATHS if os.path.exists(p)), None)
     sello = next((p for p in SELLO_PATHS if os.path.exists(p)), None)
 
-    _cod_barras = _ced_alnum or "0"
+    _cod_barras = ((egreso.upper() + "-" + _ced_alnum) if egreso else (_ced_alnum or "0"))
+
+    # Nota al pie: se estampa al pie de CADA página para que SIEMPRE aparezca
+    # (antes se dibujaba una sola vez y podía chocar con otros bloques y no verse).
+    nota_pie = ("V\u00e1lido solo con el sello h\u00famedo regional y la firma aut\u00f3grafa del "
+                "funcionario autorizado. Cualquier enmienda o tachadura anula el presente documento.")
 
     class NumberedCanvas(canvas.Canvas):
         """Lienzo que, al final, conoce el TOTAL de paginas y estampa en
@@ -5097,6 +5113,7 @@ def generar_certificado_pdf(row):
             for i, estado_pag in enumerate(self._guardadas, start=1):
                 self.__dict__.update(estado_pag)
                 self._encabezado_derecho(i, total)
+                self._pie_nota()
                 canvas.Canvas.showPage(self)
             canvas.Canvas.save(self)
         def _encabezado_derecho(self, num, total):
@@ -5112,6 +5129,16 @@ def generar_certificado_pdf(row):
                 bc.drawOn(self, x1 - bc.width, yb - 12 * mm)
             except Exception:
                 pass
+
+        def _pie_nota(self):
+            # Nota al pie, abajo-izquierda, evitando el ancho del QR (a la
+            # derecha). Se dibuja en TODAS las páginas, siempre visible.
+            self.setFont("Helvetica-Oblique", 6.8)
+            self.setFillColorRGB(0.2, 0.2, 0.2)
+            yy = margen + 6 * mm
+            for ln in _wrap(nota_pie, "Helvetica-Oblique", 6.8, x1 - x0 - 26 * mm):
+                self.drawString(x0, yy, ln); yy -= 3.4 * mm
+            self.setFillColorRGB(0, 0, 0)
 
     buffer = BytesIO()
     c = NumberedCanvas(buffer, pagesize=letter)
@@ -5280,6 +5307,34 @@ def generar_certificado_pdf(row):
         c.line(x0, y - alto_fila, x1, y - alto_fila)
         _vlines(y, y - alto_fila)
         y -= alto_fila
+    # Fila automática: ACTIVIDADES ACADÉMICAS ACREDITABLES I y II.
+    # Se agrega siempre para PNF (estudiante BACHILLER o TSU):
+    #   - 12 U.C. para quien ingresa como BACHILLER
+    #   -  6 U.C. para quien ingresa como TSU
+    # Calificación APROBADO y en el período de egreso del estudiante.
+    if tipo_estudiante in ("BACHILLER", "TSU"):
+        acr_uc = 6.0 if es_tsu else 12.0
+        acr_nombre = "ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES I y II"
+        acr_lines = _wrap(acr_nombre, "Helvetica", 8, ancho_mat) or [""]
+        acr_alto = max(fila_alto, len(acr_lines) * 3.6 * mm + 2 * mm)
+        if y - acr_alto < margen + 18 * mm:
+            c.showPage()
+            y = _encabezado(alto - margen)
+            y = _cab_tabla(y)
+        yb = y - 4 * mm
+        c.setFont("Helvetica", 7.5)
+        c.drawString(x0 + 2 * mm, yb, egreso or "")
+        c.setFont("Helvetica", 8)
+        for i, ml in enumerate(acr_lines):
+            c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
+        c.drawCentredString((col_ucv + col_cal) / 2, yb, "%g" % acr_uc)
+        c.setFont("Helvetica", 7)
+        c.drawCentredString((col_cal + x1) / 2, yb, "APROBADO")
+        c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
+        c.line(x0, y - acr_alto, x1, y - acr_alto)
+        _vlines(y, y - acr_alto)
+        y -= acr_alto
+        total_uc += acr_uc
     # Fila TOTAL UNIDADES DE CRÉDITO: por solicitud del usuario, NO se imprime
     # en la certificación. El total sigue visible en pantalla (Ver Calificaciones).
     # Se conserva el cálculo de total_uc por si se necesita internamente.
@@ -5323,17 +5378,17 @@ def generar_certificado_pdf(row):
             pass
     if sello:
         try:
-            # Sello MÁS GRANDE y AL COSTADO (a la derecha) de la firma.
-            # - Antes medía 24 mm y quedaba pegado al margen derecho.
-            # - Ahora mide 34 mm y se coloca justo al lado de la firma,
-            #   apoyado en la misma línea de firma (base en 'y'), por encima
-            #   del nombre centrado del Secretario para no taparlo.
-            sw, sh = 34 * mm, 34 * mm
+            # Sello de 5 cm (50 mm) AL COSTADO derecho de la firma, apoyado en
+            # la zona en blanco del margen derecho para NO tapar la información
+            # del documento (firma, nombre y datos van centrados a la izquierda
+            # del sello). Se centra en vertical respecto a la línea de firma.
+            sw, sh = 50 * mm, 50 * mm
             fw_firma = 42 * mm  # ancho de la firma dibujada arriba
-            seal_x = centro + fw_firma / 2 + 3 * mm  # al lado derecho de la firma
+            seal_x = centro + fw_firma / 2 + 4 * mm  # al lado derecho de la firma
             if seal_x + sw > x1:  # sujeción: no salirse del margen derecho
                 seal_x = x1 - sw
-            c.drawImage(ImageReader(sello), seal_x, y, width=sw, height=sh,
+            seal_y = y - 16 * mm  # centrado en vertical sobre la firma
+            c.drawImage(ImageReader(sello), seal_x, seal_y, width=sw, height=sh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
@@ -5370,6 +5425,7 @@ def generar_certificado_pdf(row):
                 "Titulo: " + titulo_grado + "\n" +
                 "Cedula: " + cedula + "\n" +
                 "Estado: " + estado + "\n" +
+                "Egreso: " + (egreso or "-") + "\n" +
                 "Serial: " + serial + "\n" +
                 "Emision: " + fecha_emision)
     y_pie = margen + 2 * mm
@@ -5383,15 +5439,6 @@ def generar_certificado_pdf(row):
         renderPDF.draw(d, c, x1 - qsize, y_pie)
     except Exception:
         pass
-    # Nota al pie: solo valido con sello humedo y firma autografa
-    nota_pie = ("V\u00e1lido solo con el sello h\u00famedo regional y la firma aut\u00f3grafa del "
-                "funcionario autorizado. Cualquier enmienda o tachadura anula el presente documento.")
-    c.setFont("Helvetica-Oblique", 6.8)
-    c.setFillColorRGB(0.2, 0.2, 0.2)
-    yy = y_pie + 16 * mm
-    for ln in _wrap(nota_pie, "Helvetica-Oblique", 6.8, x1 - x0 - qsize - 6 * mm):
-        c.drawString(x0, yy, ln); yy -= 3.4 * mm
-    c.setFillColorRGB(0, 0, 0)
 
     c.showPage()
     c.save()
@@ -6373,9 +6420,13 @@ elif menu == "📄 Generar Documentos":
                 df_gen["cedula"].fillna("").str.upper().str.contains(t)
             ]
         if gf_estado:
-            df_gen = df_gen[df_gen["estado"].isin(gf_estado)]
+            # Comparación tolerante a MAYÚSCULAS/minúsculas y acentos
+            # (así "LARA" guardado antes también coincide con "Lara").
+            _sel_est = {_fg_norm_h(e) for e in gf_estado}
+            df_gen = df_gen[df_gen["estado"].fillna("").map(_fg_norm_h).isin(_sel_est)]
         if gf_municipio:
-            df_gen = df_gen[df_gen["municipio"].isin(gf_municipio)]
+            _sel_mun = {_fg_norm_h(m) for m in gf_municipio}
+            df_gen = df_gen[df_gen["municipio"].fillna("").map(_fg_norm_h).isin(_sel_mun)]
         if gf_aula.strip():
             df_gen = df_gen[df_gen["aula_taller"].fillna("").str.upper().str.contains(gf_aula.strip().upper())]
         if gf_tipo_prog:
@@ -6509,6 +6560,17 @@ elif menu == "📥 Carga Masiva (Excel)":
     imp_exp = st.checkbox("Importar EXPEDIENTES", value=True, key="cm_imp_exp")
     imp_not = st.checkbox("Importar NOTAS", value=True, key="cm_imp_not")
 
+    # PERÍODO DE EGRESO del archivo: se aplica a todos los expedientes que no
+    # traigan su propio período en la columna del Excel. Es el período que
+    # aparece como egreso en la certificación (serial, QR y código de barras).
+    cm_egreso = st.text_input(
+        "🎓 Período de egreso (se aplica a todo el archivo)",
+        key="cm_egreso",
+        placeholder="Ej.: 2023-III",
+        help="Indique el período en que egresan estos estudiantes. Se usará en la "
+             "certificación (serial, QR y código de barras) para las filas que no "
+             "traigan su propio período de culminación en el Excel.")
+
     if archivo is not None:
         # Límites de carga (evita agotar memoria con archivos enormes / DoS):
         MAX_MB_EXCEL = 10          # tamaño máximo del archivo
@@ -6562,7 +6624,7 @@ elif menu == "📥 Carga Masiva (Excel)":
                 _est = []
                 if imp_exp and df_exp is not None:
                     with st.spinner("Importando expedientes..."):
-                        ok, fail, errs = procesar_carga_masiva_expedientes(df_exp, st.session_state.usuario)
+                        ok, fail, errs = procesar_carga_masiva_expedientes(df_exp, st.session_state.usuario, cm_egreso)
                     resumen.append(("Expedientes", ok, fail, errs))
                     _obs += ["Expediente: " + str(e) for e in (errs or [])[:50]]
                 if hacer_notas and imp_not and df_not is not None:
