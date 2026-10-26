@@ -5408,8 +5408,13 @@ def generar_certificado_pdf(row):
     # Se conserva el cálculo de total_uc por si se necesita internamente.
     y -= 3 * mm
 
-    if y < margen + 72 * mm:
+    if y < margen + 85 * mm:
         c.showPage(); y = _encabezado(alto - margen)
+    # Si en la ULTIMA parte sobra mucho espacio abajo, se baja todo el bloque
+    # de cierre (leyenda + firma + sello) para que la hoja no se vea vacía.
+    _sobra = y - (margen + 100 * mm)
+    if _sobra > 0:
+        y -= min(_sobra, 45 * mm)
     nota_escala = ("Se expone en la certificaci\u00f3n solamente las unidades curriculares "
                    "cursadas y aprobadas en el periodo respectivo. La escala de calificaci\u00f3n "
                    "es del 1 al 20 con m\u00ednima aprobatoria 12 (doce). Son consideradas tambi\u00e9n "
@@ -5435,11 +5440,13 @@ def generar_certificado_pdf(row):
     c.setFont("Helvetica", 10)
     for ln in _wrap(cierre, "Helvetica", 10, x1 - x0):
         c.drawString(x0, y, ln); y -= 5.0 * mm
-    y -= 20 * mm
+    y -= 33 * mm
 
     if firma:
         try:
-            fw, fh = 55 * mm, 22 * mm
+            # La firma del secretario es más alta que ancha; se agranda ajustando
+            # por ALTO para que se vea bien marcada sobre la línea de firma.
+            fw, fh = 55 * mm, 30 * mm
             c.drawImage(ImageReader(firma), centro - fw / 2, y, width=fw, height=fh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
@@ -5474,7 +5481,7 @@ def generar_certificado_pdf(row):
     c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio \u201cSamuel Robinson\u201d")
     y -= 3.5 * mm
     c.drawCentredString(centro, y, "Seg\u00fan Gaceta No: 41.632   Resoluci\u00f3n Conjunta No. 0026/002")
-    y -= 13 * mm
+    y -= 20 * mm
 
     # El bloque "Representante de la Secretaría del Estado" debe quedar ENCIMA
     # de la nota de pie de página y sin chocar con ella (observación del usuario).
