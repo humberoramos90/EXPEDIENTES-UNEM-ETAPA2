@@ -2190,6 +2190,18 @@ def _calificacion_texto(nota):
         return mapa_texto.get(su, su)
 
 
+def _calif_num_letras(nota):
+    """Separa la calificación en (número, letras) para mostrarla en DOS
+    columnas. Ej.: 18 -> ('18', 'DIECIOCHO'); AP -> ('', 'APROBADO')."""
+    s = _calificacion_texto(nota)
+    if not s:
+        return "", ""
+    partes = s.split(" ", 1)
+    if partes[0].isdigit():
+        return partes[0], (partes[1] if len(partes) > 1 else "")
+    return "", s
+
+
 def _orden_desde_periodo(texto, grupo_idx):
     """Extrae el número de semestre/trimestre del texto del período (p.ej.
     'TRAYECTO 3 - SEMESTRE 5' -> 5). Si no hay número, usa el índice de grupo."""
@@ -5158,10 +5170,12 @@ def generar_certificado_pdf(row):
             # "Pagina X de Y-serial"  (ej: Pagina 2 de 2-2026-I-11145691)
             texto_pag = "P\u00e1gina %d de %d-%s" % (num, total, serial)
             self.drawRightString(x1, yb, texto_pag)
-            # Codigo de barras debajo del indicador de pagina
+            # Codigo de barras debajo del indicador de pagina. Desde la 2a
+            # pagina se baja 0.70 cm (7 mm) para que no salga tan arriba.
             try:
                 bc = code128.Code128(_cod_barras, barHeight=9 * mm, barWidth=0.32 * mm)
-                bc.drawOn(self, x1 - bc.width, yb - 12 * mm)
+                _bc_off = 12 * mm + (7 * mm if num >= 2 else 0)
+                bc.drawOn(self, x1 - bc.width, yb - _bc_off)
             except Exception:
                 pass
 
@@ -5190,6 +5204,14 @@ def generar_certificado_pdf(row):
             out.append(linea)
         return out
 
+    def _calif_fit_font(texto, ancho_max, base=8.0, minf=5.0):
+        """Elige el mayor tamaño de letra (<= base) con el que 'texto' entra en
+        'ancho_max'; no baja de 'minf'. Para la columna de calificación en letras."""
+        f = base
+        while f > minf and stringWidth(str(texto), "Helvetica", f) > ancho_max:
+            f -= 0.5
+        return f
+
     def _justif(texto, fuente, tam, ancho_max, y, alto_linea, ultima_justif=False):
         """Dibuja 'texto' JUSTIFICADO (bordes parejos a ambos lados) desde x0.
         Devuelve la nueva 'y'. La ultima linea de cada parrafo NO se justifica."""
@@ -5211,15 +5233,15 @@ def generar_certificado_pdf(row):
         return y
 
     def _timbre(y):
-        # Recuadro "TIMBRE FISCAL" VERTICAL (rectángulo hacia abajo) en la
-        # esquina superior IZQUIERDA, según la observación del usuario.
-        bw, bh = 16 * mm, 26 * mm
+        # Recuadro "TIMBRE FISCAL" CUADRADO (un poco más grande, según la
+        # observación de la Secretaría) en la esquina superior IZQUIERDA.
+        bw, bh = 24 * mm, 24 * mm
         c.setStrokeColorRGB(0.35, 0.35, 0.35); c.setLineWidth(0.6)
         c.rect(x0, y - bh, bw, bh, fill=0, stroke=1)
-        c.setFont("Helvetica", 6)
+        c.setFont("Helvetica", 6.5)
         c.setFillColorRGB(0.35, 0.35, 0.35)
-        c.drawCentredString(x0 + bw / 2, y - 5 * mm, "TIMBRE")
-        c.drawCentredString(x0 + bw / 2, y - 9 * mm, "FISCAL")
+        c.drawCentredString(x0 + bw / 2, y - 10.5 * mm, "TIMBRE")
+        c.drawCentredString(x0 + bw / 2, y - 14.5 * mm, "FISCAL")
         c.setFillColorRGB(0, 0, 0)
         c.setStrokeColorRGB(0, 0, 0)
         return y - 3 * mm
@@ -5260,8 +5282,10 @@ def generar_certificado_pdf(row):
     col_ucv = x1 - 46 * mm          # fin de "Unidad Curricular" / inicio "U.C."
     col_cal = x1 - 34 * mm          # fin de "U.C." / inicio "Calificacion"
     col_uc = col_cal                # borde derecho para los valores de U.C.
+    # La columna "Calificaci\u00f3n" se divide en DOS: n\u00famero (angosta) y letras.
+    col_calnum = col_cal + 10 * mm  # borde entre el n\u00famero y las letras
     col_calif = x1
-    _cols_x = [x0, col_per, col_ucv, col_cal, x1]
+    _cols_x = [x0, col_per, col_ucv, col_cal, col_calnum, x1]
 
     def _vlines(y_top, y_bot):
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
@@ -5276,7 +5300,8 @@ def generar_certificado_pdf(row):
         c.drawString(x0 + 2 * mm, y - 4.2 * mm, "Per\u00edodo Cursado")
         c.drawCentredString((col_per + col_ucv) / 2, y - 4.2 * mm, "Nombre de la Unidad Curricular")
         c.drawCentredString((col_ucv + col_cal) / 2, y - 4.2 * mm, "U.C.")
-        c.drawCentredString((col_cal + x1) / 2, y - 4.2 * mm, "Calificaci\u00f3n")
+        c.drawCentredString((col_cal + col_calnum) / 2, y - 4.2 * mm, "Calif.")
+        c.drawCentredString((col_calnum + x1) / 2, y - 4.2 * mm, "En letras")
         c.setFillColorRGB(0, 0, 0)
         # borde superior de la cabecera
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
@@ -5313,7 +5338,10 @@ def generar_certificado_pdf(row):
         y -= fila_alto
     for m in malla:
         nota_raw = notas.get(m["materia"], "")
-        calif = _calificacion_texto(nota_raw) if nota_raw else "POR CURSAR"
+        if nota_raw:
+            calif_num, calif_let = _calif_num_letras(nota_raw)
+        else:
+            calif_num, calif_let = "", "POR CURSAR"
         mat_lines = _wrap(m["materia"], "Helvetica", 8, ancho_mat) or [""]
         alto_fila = max(fila_alto, len(mat_lines) * 3.6 * mm + 2 * mm)
         # Reserva mínima: solo hay que garantizar que la fila y la fila TOTAL
@@ -5335,8 +5363,12 @@ def generar_certificado_pdf(row):
         for i, ml in enumerate(mat_lines):
             c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
         c.drawCentredString((col_ucv + col_cal) / 2, yb, ("%g" % uc if uc else "-"))
-        c.setFont("Helvetica", 7)
-        c.drawCentredString((col_cal + x1) / 2, yb, calif)
+        if calif_num:
+            c.setFont("Helvetica", 8)
+            c.drawCentredString((col_cal + col_calnum) / 2, yb, calif_num)
+        if calif_let:
+            c.setFont("Helvetica", _calif_fit_font(calif_let, (x1 - col_calnum) - 2 * mm))
+            c.drawCentredString((col_calnum + x1) / 2, yb, calif_let)
         # bordes de la fila (horizontal inferior + verticales de columnas)
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
         c.line(x0, y - alto_fila, x1, y - alto_fila)
@@ -5364,8 +5396,8 @@ def generar_certificado_pdf(row):
         for i, ml in enumerate(acr_lines):
             c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
         c.drawCentredString((col_ucv + col_cal) / 2, yb, "%g" % acr_uc)
-        c.setFont("Helvetica", 7)
-        c.drawCentredString((col_cal + x1) / 2, yb, "APROBADO")
+        c.setFont("Helvetica", _calif_fit_font("APROBADO", (x1 - col_calnum) - 2 * mm))
+        c.drawCentredString((col_calnum + x1) / 2, yb, "APROBADO")
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
         c.line(x0, y - acr_alto, x1, y - acr_alto)
         _vlines(y, y - acr_alto)
@@ -5382,9 +5414,9 @@ def generar_certificado_pdf(row):
                    "cursadas y aprobadas en el periodo respectivo. La escala de calificaci\u00f3n "
                    "es del 1 al 20 con m\u00ednima aprobatoria 12 (doce). Son consideradas tambi\u00e9n "
                    "las calificaciones de AP \u201cAprobado\u201d, AC \u201cAprobada por Acreditaci\u00f3n\u201d.")
-    c.setFont("Helvetica", 8)
-    for ln in _wrap(nota_escala, "Helvetica", 8, x1 - x0):
-        c.drawString(x0, y, ln); y -= 4 * mm
+    c.setFont("Helvetica", 9.5)
+    for ln in _wrap(nota_escala, "Helvetica", 9.5, x1 - x0):
+        c.drawString(x0, y, ln); y -= 4.8 * mm
     y -= 2 * mm
 
     if es_tsu:
@@ -5400,14 +5432,14 @@ def generar_certificado_pdf(row):
 
     cierre = ("Certificaci\u00f3n que se expide a petici\u00f3n de la parte interesada a los "
               "efectos y fines consiguientes, en Caracas el " + fecha_emision + ".")
-    c.setFont("Helvetica", 8.5)
-    for ln in _wrap(cierre, "Helvetica", 8.5, x1 - x0):
-        c.drawString(x0, y, ln); y -= 4.4 * mm
-    y -= 14 * mm
+    c.setFont("Helvetica", 10)
+    for ln in _wrap(cierre, "Helvetica", 10, x1 - x0):
+        c.drawString(x0, y, ln); y -= 5.0 * mm
+    y -= 20 * mm
 
     if firma:
         try:
-            fw, fh = 42 * mm, 17 * mm
+            fw, fh = 55 * mm, 22 * mm
             c.drawImage(ImageReader(firma), centro - fw / 2, y, width=fw, height=fh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
