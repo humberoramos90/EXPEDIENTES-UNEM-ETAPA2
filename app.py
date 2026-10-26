@@ -1487,7 +1487,8 @@ def actualizar_expediente(exp_id, campos):
     columnas_validas = {
         "estado", "municipio", "aula_taller", "nombres", "apellidos", "cedula",
         "correo_titular", "tipo_programa", "programa", "tipo_expediente",
-        "observaciones",
+        "observaciones", "periodo_culminacion", "tipo_estudiante",
+        "periodo_inicio", "periodos_por_anio", "sexo",
     }
     sets = []
     params = []
@@ -4544,6 +4545,20 @@ def _fg_parse_hoja(ws):
     if col_cod is None:
         col_cod = find("MALLA", exact=True)
 
+    # Columnas de ACTIVIDADES ACADÉMICAS ACREDITABLES.
+    # - col_acr_uc : las U.C. de las acreditables (12 = BACHILLER, 6 = TSU).
+    # - col_acr_per: el PERÍODO de esas actividades = PERÍODO DE EGRESO (grado).
+    #   Ese período es el que va en el serial, el QR y el código de barras.
+    col_acr_uc = None
+    col_acr_per = None
+    for _ai in range(len(H)):
+        _ah = H[_ai]
+        if "ACREDITAB" in _ah:
+            if "PERIODO" in _ah:
+                col_acr_per = _ai
+            elif col_acr_uc is None:
+                col_acr_uc = _ai
+
     # --- Bloques de unidades curriculares (por cada columna PERIODO) ---
     periodo_cols = sorted(find_all_periodo())
     unidades = []  # {col_uc, col_nombre, col_num, col_periodo, trayecto, bloque}
@@ -4639,6 +4654,18 @@ def _fg_parse_hoja(ws):
             "cedula": ced,
             "sexo": sexo,
         }
+        # PERÍODO DE EGRESO y TIPO DE INGRESO desde las acreditables:
+        #   12 U.C. -> BACHILLER (acreditables I y II)
+        #    6 U.C. -> TSU       (acreditables II)
+        acr_uc_raw = _val(r, col_acr_uc) if col_acr_uc is not None else ""
+        acr_per = _val(r, col_acr_per) if col_acr_per is not None else ""
+        try:
+            _acr = float(str(acr_uc_raw).replace(",", ".")) if acr_uc_raw else 0.0
+        except ValueError:
+            _acr = 0.0
+        datos["periodo_culminacion"] = acr_per
+        datos["tipo_estudiante"] = ("TSU" if (_acr and _acr <= 6)
+                                    else ("BACHILLER" if _acr >= 12 else ""))
         nmap = {}
         for u in unidades:
             if not u["materia"]:
@@ -4779,10 +4806,13 @@ def parsear_formato_grado(file_like):
     return resultado
 
 
-def procesar_formato_grado(hojas_info, usuario, actualizar_mallas=True, importar_estudiantes=True):
+def procesar_formato_grado(hojas_info, usuario, actualizar_mallas=True, importar_estudiantes=True, periodo_egreso=""):
     """Aplica el import. hojas_info: lista de dicts como los de
     parsear_formato_grado, cada uno con 'programa_oficial' ya confirmado.
+    'periodo_egreso' (opcional) fuerza el período de egreso/grado para TODOS
+    los estudiantes del archivo; si queda vacío se usa el que trae cada fila.
     Devuelve un reporte (lista de dicts por hoja)."""
+    periodo_egreso = (periodo_egreso or "").strip()
     reporte = []
     canon, prog_a_tipo = _cm_mapas_programas()
     for info in hojas_info:
@@ -4839,6 +4869,8 @@ def procesar_formato_grado(hojas_info, usuario, actualizar_mallas=True, importar
                         "programa": prog,
                         "tipo_expediente": "EGRESADO",
                         "sexo": datos.get("sexo", ""),
+                        "periodo_culminacion": (periodo_egreso or datos.get("periodo_culminacion", "")),
+                        "tipo_estudiante": datos.get("tipo_estudiante", ""),
                         "registrado_por": usuario,
                     }
                     if fila:
@@ -4846,6 +4878,8 @@ def procesar_formato_grado(hojas_info, usuario, actualizar_mallas=True, importar
                             "estado": reg["estado"], "municipio": reg["municipio"],
                             "nombres": reg["nombres"], "apellidos": reg["apellidos"],
                             "tipo_programa": tipo, "programa": prog,
+                            "periodo_culminacion": reg["periodo_culminacion"],
+                            "tipo_estudiante": reg["tipo_estudiante"],
                         })
                         r["estudiantes_actualizados"] += 1
                         _obs_est = "Actualizado"
@@ -5044,6 +5078,7 @@ def generar_certificado_pdf(row):
     municipio = _g("municipio")
     sexo = _g("sexo")
     tipo_estudiante = _g("tipo_estudiante").upper()
+    tipo_programa = _g("tipo_programa").upper()
     es_tsu = "TSU" in tipo_estudiante
     periodo_inicio = _g("periodo_inicio")
     try:
@@ -5307,14 +5342,15 @@ def generar_certificado_pdf(row):
         c.line(x0, y - alto_fila, x1, y - alto_fila)
         _vlines(y, y - alto_fila)
         y -= alto_fila
-    # Fila automática: ACTIVIDADES ACADÉMICAS ACREDITABLES I y II.
-    # Se agrega siempre para PNF (estudiante BACHILLER o TSU):
-    #   - 12 U.C. para quien ingresa como BACHILLER
-    #   -  6 U.C. para quien ingresa como TSU
+    # Fila automática: ACTIVIDADES ACADÉMICAS ACREDITABLES.
+    # Solo para programas PNF y cuando hay tipo de ingreso definido:
+    #   - BACHILLER: "I y II", 12 U.C.
+    #   - TSU:       "II",      6 U.C.
     # Calificación APROBADO y en el período de egreso del estudiante.
-    if tipo_estudiante in ("BACHILLER", "TSU"):
+    if tipo_programa == "PNF" and tipo_estudiante in ("BACHILLER", "TSU"):
         acr_uc = 6.0 if es_tsu else 12.0
-        acr_nombre = "ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES I y II"
+        acr_nombre = ("ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES II" if es_tsu
+                      else "ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES I y II")
         acr_lines = _wrap(acr_nombre, "Helvetica", 8, ancho_mat) or [""]
         acr_alto = max(fila_alto, len(acr_lines) * 3.6 * mm + 2 * mm)
         if y - acr_alto < margen + 18 * mm:
@@ -5383,11 +5419,12 @@ def generar_certificado_pdf(row):
             # del documento (firma, nombre y datos van centrados a la izquierda
             # del sello). Se centra en vertical respecto a la línea de firma.
             sw, sh = 50 * mm, 50 * mm
-            fw_firma = 42 * mm  # ancho de la firma dibujada arriba
-            seal_x = centro + fw_firma / 2 + 4 * mm  # al lado derecho de la firma
+            seal_x = centro + 25 * mm  # desplazado a la derecha de la firma
             if seal_x + sw > x1:  # sujeción: no salirse del margen derecho
                 seal_x = x1 - sw
-            seal_y = y - 16 * mm  # centrado en vertical sobre la firma
+            seal_y = y - 42 * mm  # bajado para NO tapar la leyenda/párrafos
+            if seal_y < margen + 2 * mm:  # sujeción: no salirse por abajo
+                seal_y = margen + 2 * mm
             c.drawImage(ImageReader(sello), seal_x, seal_y, width=sw, height=sh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
@@ -6054,6 +6091,9 @@ elif menu == "📝 Registrar Expediente":
             periodo_inicio = st.text_input("🗓️ PERÍODO DE INICIO", placeholder="Ej: 2020-I (el sistema continúa la secuencia)",
                                            key="reg_periodo_inicio",
                                            help="Escriba solo el primer período. El sistema genera automáticamente los siguientes (…-II, luego año+1-I).")
+            periodo_egreso = st.text_input("🎓 PERÍODO DE EGRESO (grado)", placeholder="Ej: 2023-II",
+                                           key="reg_periodo_egreso",
+                                           help="Período en que egresa/se gradúa. Se usa en el serial, el QR y el código de barras de la certificación.")
             # Régimen sugerido según el programa (punto 10): semestral o trimestral
             _reg_ppa, _reg_lbl = _regimen_programa_info(programa_real) if programa_real else (2, "Semestral (2 períodos por año: I y II)")
             _reg_idx = {2: 0, 3: 1, 4: 2}.get(_reg_ppa, 0)
@@ -6103,7 +6143,7 @@ elif menu == "📝 Registrar Expediente":
                     "tipo_programa": tipo_real,
                     "programa": programa_real,
                     "tipo_expediente": tipo_exp_real,
-                    "periodo_culminacion": "",
+                    "periodo_culminacion": periodo_egreso.strip().upper(),
                     "sexo": ("" if sexo_sel == "— Seleccione —" else sexo_sel),
                     "tipo_estudiante": (("TSU" if tipo_estudiante_sel.startswith("TSU") else ("BACHILLER" if tipo_estudiante_sel.startswith("BACHILLER") else "")) if tipo_real == "PNF" else ""),
                     "periodo_inicio": periodo_inicio.strip().upper(),
@@ -6723,6 +6763,14 @@ elif menu == "📥 Carga Masiva (Excel)":
                          value=True, key="fg_upd")
     fg_est = st.checkbox("Importar ESTUDIANTES y NOTAS (solo si el archivo trae datos personales)",
                          value=True, key="fg_est")
+    fg_egreso = st.text_input(
+        "Período de EGRESO (grado) — opcional",
+        key="fg_egreso",
+        placeholder="Ej.: 2023-II",
+        help=("Si lo llena, este período de egreso se aplica a TODOS los "
+              "estudiantes del archivo (se usa en el serial, el QR y el código "
+              "de barras). Si lo deja en blanco, se usa el período que trae cada fila."),
+    )
     st.caption("⚠️ Al actualizar la malla se REEMPLAZA por completo la del programa con lo que trae "
                "el archivo. Para programas PNF use el archivo de BACHILLER (malla completa T1–T4); "
                "el archivo de TSU trae solo T3–T4.")
@@ -6778,7 +6826,7 @@ elif menu == "📥 Carga Masiva (Excel)":
             for h in _validas:
                 h["programa_oficial"] = _elegido.get(str(h.get("hoja", "")), h.get("programa_oficial", ""))
             with st.spinner("Aplicando FORMATO GRADO..."):
-                _rep = procesar_formato_grado(_validas, st.session_state.usuario, fg_upd, fg_est)
+                _rep = procesar_formato_grado(_validas, st.session_state.usuario, fg_upd, fg_est, periodo_egreso=fg_egreso)
             for r in _rep:
                 if r.get("estado") == "OMITIDA":
                     st.info(f"⏩ Hoja '{r['hoja']}' omitida: {r.get('detalle', '')}")
