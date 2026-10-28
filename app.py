@@ -5278,7 +5278,7 @@ def generar_certificado_pdf(row):
         return y
 
     # Columnas de la tabla (con lineas divisorias verticales)
-    col_per = x0 + 28 * mm          # fin de la columna "Periodo Cursado"
+    col_per = x0 + 22 * mm          # fin de la columna "Periodo Cursado" (angostada)
     col_ucv = x1 - 46 * mm          # fin de "Unidad Curricular" / inicio "U.C."
     col_cal = x1 - 34 * mm          # fin de "U.C." / inicio "Calificacion"
     col_uc = col_cal                # borde derecho para los valores de U.C.
@@ -5287,9 +5287,10 @@ def generar_certificado_pdf(row):
     col_calif = x1
     _cols_x = [x0, col_per, col_ucv, col_cal, col_calnum, x1]
 
-    def _vlines(y_top, y_bot):
+    def _vlines(y_top, y_bot, merge_calif=False):
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
-        for cx in _cols_x:
+        _xs = _cols_x if not merge_calif else [cx for cx in _cols_x if cx != col_calnum]
+        for cx in _xs:
             c.line(cx, y_top, cx, y_bot)
 
     def _cab_tabla(y):
@@ -5297,7 +5298,9 @@ def generar_certificado_pdf(row):
         c.rect(x0, y - 6 * mm, x1 - x0, 6 * mm, fill=1, stroke=0)
         c.setFillColorRGB(1, 1, 1)
         c.setFont("Helvetica-Bold", 7.5)
+        c.setFont("Helvetica-Bold", 7)
         c.drawString(x0 + 2 * mm, y - 4.2 * mm, "Per\u00edodo Cursado")
+        c.setFont("Helvetica-Bold", 7.5)
         c.drawCentredString((col_per + col_ucv) / 2, y - 4.2 * mm, "Nombre de la Unidad Curricular")
         c.drawCentredString((col_ucv + col_cal) / 2, y - 4.2 * mm, "U.C.")
         c.drawCentredString((col_cal + col_calnum) / 2, y - 4.2 * mm, "Calif.")
@@ -5363,16 +5366,22 @@ def generar_certificado_pdf(row):
         for i, ml in enumerate(mat_lines):
             c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
         c.drawCentredString((col_ucv + col_cal) / 2, yb, ("%g" % uc if uc else "-"))
-        if calif_num:
+        _merge = not calif_num   # sin nota numérica (APROBADO/AC/POR CURSAR): celda única
+        if _merge:
+            # Se fusionan "Calif." y "En letras" en una sola celda ancha para que
+            # el recuadro del número NO quede en blanco en esa materia.
+            if calif_let:
+                c.setFont("Helvetica", _calif_fit_font(calif_let, (x1 - col_cal) - 2 * mm))
+                c.drawCentredString((col_cal + x1) / 2, yb, calif_let)
+        else:
             c.setFont("Helvetica", 8)
             c.drawCentredString((col_cal + col_calnum) / 2, yb, calif_num)
-        if calif_let:
             c.setFont("Helvetica", _calif_fit_font(calif_let, (x1 - col_calnum) - 2 * mm))
             c.drawCentredString((col_calnum + x1) / 2, yb, calif_let)
         # bordes de la fila (horizontal inferior + verticales de columnas)
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
         c.line(x0, y - alto_fila, x1, y - alto_fila)
-        _vlines(y, y - alto_fila)
+        _vlines(y, y - alto_fila, merge_calif=_merge)
         y -= alto_fila
     # Fila automática: ACTIVIDADES ACADÉMICAS ACREDITABLES.
     # Solo para programas PNF y cuando hay tipo de ingreso definido:
@@ -5396,11 +5405,12 @@ def generar_certificado_pdf(row):
         for i, ml in enumerate(acr_lines):
             c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
         c.drawCentredString((col_ucv + col_cal) / 2, yb, "%g" % acr_uc)
-        c.setFont("Helvetica", _calif_fit_font("APROBADO", (x1 - col_calnum) - 2 * mm))
-        c.drawCentredString((col_calnum + x1) / 2, yb, "APROBADO")
+        # Fila de acreditación: siempre APROBADO (sin número) -> celda fusionada.
+        c.setFont("Helvetica", _calif_fit_font("APROBADO", (x1 - col_cal) - 2 * mm))
+        c.drawCentredString((col_cal + x1) / 2, yb, "APROBADO")
         c.setStrokeColorRGB(0.45, 0.45, 0.45); c.setLineWidth(0.4)
         c.line(x0, y - acr_alto, x1, y - acr_alto)
-        _vlines(y, y - acr_alto)
+        _vlines(y, y - acr_alto, merge_calif=True)
         y -= acr_alto
         total_uc += acr_uc
     # Fila TOTAL UNIDADES DE CRÉDITO: por solicitud del usuario, NO se imprime
@@ -5408,62 +5418,75 @@ def generar_certificado_pdf(row):
     # Se conserva el cálculo de total_uc por si se necesita internamente.
     y -= 3 * mm
 
-    if y < margen + 85 * mm:
-        c.showPage(); y = _encabezado(alto - margen)
-    # Si en la ULTIMA parte sobra mucho espacio abajo, se baja todo el bloque
-    # de cierre (leyenda + firma + sello) para que la hoja no se vea vacía.
-    _sobra = y - (margen + 100 * mm)
-    if _sobra > 0:
-        y -= min(_sobra, 45 * mm)
+    # ----- Bloque de cierre: leyenda + firma + sello + datos del secretario -----
+    # Todo esto se trata como UN solo grupo y se CENTRA en la banda vertical que
+    # queda entre el final de la tabla y el bloque del "Representante" (anclado
+    # abajo-izquierda). Así la última hoja nunca queda con un gran vacío arriba,
+    # ni el bloque queda apretado, y la firma jamás invade la zona del
+    # Representante. Si no cabe, se pasa a una hoja nueva y se centra ahí.
     nota_escala = ("Se expone en la certificaci\u00f3n solamente las unidades curriculares "
                    "cursadas y aprobadas en el periodo respectivo. La escala de calificaci\u00f3n "
                    "es del 1 al 20 con m\u00ednima aprobatoria 12 (doce). Son consideradas tambi\u00e9n "
                    "las calificaciones de AP \u201cAprobado\u201d, AC \u201cAprobada por Acreditaci\u00f3n\u201d.")
-    c.setFont("Helvetica", 9.5)
-    for ln in _wrap(nota_escala, "Helvetica", 9.5, x1 - x0):
-        c.drawString(x0, y, ln); y -= 4.8 * mm
-    y -= 2 * mm
-
-    if es_tsu:
-        parr_tsu = ("Estas Notas Certificadas pertenecen a un Profesional al cual se le "
-                    "reconoci\u00f3 dos trayectos (T1 y T2) y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
-                    "trayectos (T3 y T4) de la malla del Plan de Estudios para obtener el "
-                    "T\u00edtulo de: " + titulo_grado + " y as\u00ed dar cumplimiento a la resoluci\u00f3n del "
-                    "Consejo Directivo No: 083.12.2022.")
-        c.setFont("Helvetica", 8)
-        for ln in _wrap(parr_tsu, "Helvetica", 8, x1 - x0):
-            c.drawString(x0, y, ln); y -= 4 * mm
-        y -= 2 * mm
-
+    parr_tsu = ("Estas Notas Certificadas pertenecen a un Profesional al cual se le "
+                "reconoci\u00f3 dos trayectos (T1 y T2) y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
+                "trayectos (T3 y T4) de la malla del Plan de Estudios para obtener el "
+                "T\u00edtulo de: " + titulo_grado + " y as\u00ed dar cumplimiento a la resoluci\u00f3n del "
+                "Consejo Directivo No: 083.12.2022.")
     cierre = ("Certificaci\u00f3n que se expide a petici\u00f3n de la parte interesada a los "
               "efectos y fines consiguientes, en Caracas el " + fecha_emision + ".")
-    c.setFont("Helvetica", 10)
-    for ln in _wrap(cierre, "Helvetica", 10, x1 - x0):
-        c.drawString(x0, y, ln); y -= 5.0 * mm
-    y -= 33 * mm
 
+    rep_top = margen + 28 * mm       # posición fija del bloque Representante
+    fh = 30 * mm                     # alto de la firma (sube desde la línea)
+    fw = 62 * mm                     # ancho máximo de la firma (horizontal)
+    gap_arriba = 6 * mm              # aire mínimo entre el cierre y el tope de la firma
+
+    # La LÍNEA de firma va ANCLADA en una posición fija de la hoja (igual que el
+    # bloque del Representante va anclado abajo). Así la última hoja reproduce
+    # siempre el mismo reparto del modelo aprobado: la leyenda arriba (justo
+    # debajo del título/tabla), la firma en la franja media-baja y el
+    # Representante al pie. Valor calibrado con el PDF modelo de la Secretaría.
+    firma_line_y = margen + 85 * mm
+
+    # Altura del bloque de leyenda (sin la firma, que va anclada aparte).
+    nota_h = len(_wrap(nota_escala, "Helvetica", 9.5, x1 - x0)) * 4.8 * mm + 2 * mm
+    tsu_h = (len(_wrap(parr_tsu, "Helvetica", 8, x1 - x0)) * 4 * mm + 2 * mm) if es_tsu else 0
+    cierre_h = len(_wrap(cierre, "Helvetica", 10, x1 - x0)) * 5.0 * mm
+    leyenda_h = nota_h + tsu_h + cierre_h
+
+    # Si la leyenda + la firma anclada no caben en lo que resta de la hoja, se
+    # pasa a una hoja nueva y la leyenda arranca justo debajo del título.
+    if y - leyenda_h < firma_line_y + gap_arriba:
+        c.showPage(); y = _encabezado(alto - margen)
+
+    # Leyenda JUSTIFICADA, anclada ARRIBA (justo debajo del título/tabla).
+    # Pequeño aire bajo el título para calcar el margen superior del modelo.
+    y -= 7 * mm
+    y = _justif(nota_escala, "Helvetica", 9.5, x1 - x0, y, 4.8 * mm)
+    y -= 2 * mm
+    if es_tsu:
+        y = _justif(parr_tsu, "Helvetica", 8, x1 - x0, y, 4 * mm)
+        y -= 2 * mm
+    y = _justif(cierre, "Helvetica", 10, x1 - x0, y, 5.0 * mm)
+
+    # Firma ANCLADA en 'firma_line_y'. Solo si la leyenda terminó tan abajo que
+    # pisaría la firma, ésta baja lo justo para respetar el aire con el cierre.
+    y = min(firma_line_y, y - gap_arriba - fh)
     if firma:
         try:
-            # La firma del secretario es más alta que ancha; se agranda ajustando
-            # por ALTO para que se vea bien marcada sobre la línea de firma.
-            fw, fh = 55 * mm, 30 * mm
             c.drawImage(ImageReader(firma), centro - fw / 2, y, width=fw, height=fh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
     if sello:
         try:
-            # Sello de 5 cm (50 mm) AL COSTADO derecho de la firma, apoyado en
-            # la zona en blanco del margen derecho para NO tapar la información
-            # del documento (firma, nombre y datos van centrados a la izquierda
-            # del sello). Se centra en vertical respecto a la línea de firma.
             sw, sh = 50 * mm, 50 * mm
-            seal_x = centro + 25 * mm  # desplazado a la derecha de la firma
-            if seal_x + sw > x1:  # sujeción: no salirse del margen derecho
+            seal_x = centro + 25 * mm            # a la derecha de la firma
+            if seal_x + sw > x1:
                 seal_x = x1 - sw
-            seal_y = y - 42 * mm  # bajado para NO tapar la leyenda/párrafos
-            if seal_y < margen + 2 * mm:  # sujeción: no salirse por abajo
-                seal_y = margen + 2 * mm
+            seal_y = y - 22 * mm                 # centrado vertical sobre la firma
+            if seal_y < margen + 26 * mm:        # no tapar el QR de abajo-derecha
+                seal_y = margen + 26 * mm
             c.drawImage(ImageReader(sello), seal_x, seal_y, width=sw, height=sh,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
@@ -5481,13 +5504,9 @@ def generar_certificado_pdf(row):
     c.drawCentredString(centro, y, "Universidad Nacional Experimental del Magisterio \u201cSamuel Robinson\u201d")
     y -= 3.5 * mm
     c.drawCentredString(centro, y, "Seg\u00fan Gaceta No: 41.632   Resoluci\u00f3n Conjunta No. 0026/002")
-    y -= 20 * mm
 
-    # El bloque "Representante de la Secretaría del Estado" debe quedar ENCIMA
-    # de la nota de pie de página y sin chocar con ella (observación del usuario).
-    _piso_representante = margen + 30 * mm
-    if y < _piso_representante:
-        y = _piso_representante
+    # Bloque "Representante de la Secretar\u00eda del Estado" ANCLADO abajo-izquierda.
+    y = rep_top
     c.setStrokeColorRGB(0, 0, 0); c.setLineWidth(0.6)
     c.line(x0, y, x0 + 70 * mm, y)
     y -= 4 * mm
