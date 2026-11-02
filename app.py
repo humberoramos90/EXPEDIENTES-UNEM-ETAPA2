@@ -5092,6 +5092,9 @@ def generar_certificado_pdf(row):
     tipo_estudiante = _g("tipo_estudiante").upper()
     tipo_programa = _g("tipo_programa").upper()
     es_tsu = "TSU" in tipo_estudiante
+    # PNFA (Avanzado: Especialización, Maestría y Doctorado): su mínima
+    # aprobatoria es 16 (dieciséis), a diferencia del PNF que es 12 (doce).
+    es_pnfa = tipo_programa.startswith("PNFA")
     periodo_inicio = _g("periodo_inicio")
     try:
         ppa = int(float(_g("periodos_por_anio") or 2))
@@ -5424,9 +5427,13 @@ def generar_certificado_pdf(row):
     # abajo-izquierda). Así la última hoja nunca queda con un gran vacío arriba,
     # ni el bloque queda apretado, y la firma jamás invade la zona del
     # Representante. Si no cabe, se pasa a una hoja nueva y se centra ahí.
+    # Mínima aprobatoria según el tipo de programa:
+    #   PNFA (Especialización, Maestría, Doctorado) -> 16 (dieciséis)
+    #   PNF  (pregrado)                               -> 12 (doce)
+    _min_aprob = "16 (diecis\u00e9is)" if es_pnfa else "12 (doce)"
     nota_escala = ("Se expone en la certificaci\u00f3n solamente las unidades curriculares "
                    "cursadas y aprobadas en el periodo respectivo. La escala de calificaci\u00f3n "
-                   "es del 1 al 20 con m\u00ednima aprobatoria 12 (doce). Son consideradas tambi\u00e9n "
+                   "es del 1 al 20 con m\u00ednima aprobatoria " + _min_aprob + ". Son consideradas tambi\u00e9n "
                    "las calificaciones de AP \u201cAprobado\u201d, AC \u201cAprobada por Acreditaci\u00f3n\u201d.")
     parr_tsu = ("Estas Notas Certificadas pertenecen a un Profesional al cual se le "
                 "reconoci\u00f3 dos trayectos (T1 y T2) y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
@@ -5751,6 +5758,7 @@ with st.sidebar:
             "📧 Configuración de Correo",
             "📜 Bitácora de Movimientos",
             "📥 Respaldo de Datos",
+            "🗑️ Eliminación Masiva",
         ], key="nav_principal")
     elif rol == "ADMIN_AUXILIAR":
         menu = st.radio("📍 Módulos", [
@@ -6822,12 +6830,14 @@ elif menu == "📥 Carga Masiva (Excel)":
     fg_est = st.checkbox("Importar ESTUDIANTES y NOTAS (solo si el archivo trae datos personales)",
                          value=True, key="fg_est")
     fg_egreso = st.text_input(
-        "Período de EGRESO (grado) — opcional",
+        "Per\u00edodo de EGRESO (grado) \u2014 OBLIGATORIO al importar estudiantes",
         key="fg_egreso",
         placeholder="Ej.: 2023-II",
-        help=("Si lo llena, este período de egreso se aplica a TODOS los "
-              "estudiantes del archivo (se usa en el serial, el QR y el código "
-              "de barras). Si lo deja en blanco, se usa el período que trae cada fila."),
+        help=("Este per\u00edodo de egreso es la PROMOCI\u00d3N y se aplica a TODOS los "
+              "estudiantes del archivo (se usa en el serial, el QR, el c\u00f3digo de "
+              "barras y las actividades acreditables). Si va a importar estudiantes "
+              "y notas, es OBLIGATORIO llenarlo. Si solo actualiza mallas (sin "
+              "importar estudiantes), puede dejarlo en blanco."),
     )
     st.caption("⚠️ Al actualizar la malla se REEMPLAZA por completo la del programa con lo que trae "
                "el archivo. Para programas PNF use el archivo de BACHILLER (malla completa T1–T4); "
@@ -6879,6 +6889,14 @@ elif menu == "📥 Carga Masiva (Excel)":
 
         if st.button("🚀 Aplicar FORMATO GRADO ahora", type="primary",
                      use_container_width=True, key="fg_aplicar"):
+            # El período de egreso (promoción) es OBLIGATORIO cuando se van a
+            # importar estudiantes y notas: es la base del serial, el QR, el
+            # código de barras y las actividades acreditables.
+            if fg_est and not (fg_egreso or "").strip():
+                st.error("⛔ Debe indicar el **Período de EGRESO (grado)** antes de "
+                         "importar estudiantes y notas. Escríbalo arriba (ej.: 2023-II) "
+                         "y vuelva a presionar el botón.")
+                st.stop()
             _elegido = {str(r["Hoja"]): str(r["Programa OFICIAL (confirme)"] or "")
                         for _, r in df_rev_ed.iterrows()}
             for h in _validas:
@@ -8311,3 +8329,110 @@ elif menu == "📥 Respaldo de Datos":
                 )
             else:
                 st.info("📋 No se pudo generar ninguna certificación.")
+
+
+# ============================================================
+# PÁGINA: ELIMINACIÓN MASIVA (SOLO NIVEL 1 — ADMIN_PRINCIPAL)
+# ============================================================
+
+elif menu == "🗑️ Eliminación Masiva":
+    mostrar_header("🗑️ Eliminación Masiva",
+                   "Elimine varios expedientes a la vez, filtrando por estado o por programa")
+
+    # Blindaje: SOLO el Nivel 1 (Administrador Principal) puede usar esta
+    # sección. Cualquier otro rol queda bloqueado.
+    if rol != "ADMIN_PRINCIPAL":
+        st.error("🚫 Esta sección es exclusiva del Administrador Principal (Nivel 1).")
+        st.stop()
+
+    st.warning("⚠️ Esta herramienta **elimina varios expedientes a la vez**. Antes de "
+               "borrar, el sistema **archiva** una copia íntegra de cada expediente y "
+               "de sus notas (retención), de modo que la información no se pierde. Aun "
+               "así, úsela con cuidado.")
+
+    st.subheader("1️⃣ Elija qué expedientes desea eliminar")
+    st.caption("Puede filtrar por **estado**, por **tipo de programa** y por **programa**. "
+               "Deje en '— Todos —' lo que no quiera filtrar. Debe elegir al menos un filtro.")
+
+    _col_e1, _col_e2 = st.columns(2)
+    with _col_e1:
+        em_estado = st.selectbox("🏛️ Estado",
+                                 ["— Todos —"] + list(ESTADOS_MUNICIPIOS.keys()),
+                                 key="em_estado")
+    with _col_e2:
+        em_tipo = st.selectbox("🎓 Tipo de programa",
+                               ["— Todos —"] + list(TIPOS_PROGRAMA_PROGRAMAS.keys()),
+                               key="em_tipo")
+
+    if em_tipo != "— Todos —":
+        _progs = ["— Todos —"] + list(TIPOS_PROGRAMA_PROGRAMAS.get(em_tipo, []))
+    else:
+        _progs = ["— Todos —"] + sorted(
+            {p for lst in TIPOS_PROGRAMA_PROGRAMAS.values() for p in lst})
+    em_programa = st.selectbox("📘 Programa", _progs, key="em_programa")
+
+    _filtros_em = {}
+    if em_estado != "— Todos —":
+        _filtros_em["estado"] = em_estado
+    if em_tipo != "— Todos —":
+        _filtros_em["tipo_programa"] = em_tipo
+    if em_programa != "— Todos —":
+        _filtros_em["programa"] = em_programa
+
+    if not _filtros_em:
+        st.info("👆 Elija al menos un filtro (estado, tipo de programa o programa) "
+                "para ver los expedientes que se eliminarían.")
+        st.stop()
+
+    df_em = obtener_expedientes(_filtros_em)
+    _total_em = len(df_em)
+
+    st.subheader("2️⃣ Vista previa")
+    if _total_em == 0:
+        st.info("✅ No hay expedientes que coincidan con esos filtros. No hay nada que eliminar.")
+        st.stop()
+
+    st.error(f"Se eliminarán **{_total_em}** expediente(s) con los filtros elegidos.")
+    _cols_vista = [c for c in ["cedula", "nombres", "apellidos", "estado",
+                               "tipo_programa", "programa", "periodo_culminacion"]
+                   if c in df_em.columns]
+    st.dataframe(df_em[_cols_vista] if _cols_vista else df_em,
+                 use_container_width=True, hide_index=True)
+
+    st.subheader("3️⃣ Confirmación (doble)")
+    st.caption("Por seguridad, confirme en DOS pasos. Esta acción archiva y luego "
+               "elimina los expedientes mostrados arriba.")
+    em_chk = st.checkbox(
+        f"Entiendo que se archivarán y luego se eliminarán {_total_em} expediente(s).",
+        key="em_chk")
+    em_texto = st.text_input(
+        "Para confirmar, escriba la palabra ELIMINAR (en mayúsculas):",
+        key="em_texto", placeholder="ELIMINAR")
+
+    _puede_borrar = em_chk and em_texto.strip().upper() == "ELIMINAR"
+    if st.button("🗑️ Eliminar expedientes ahora", type="primary",
+                 use_container_width=True, disabled=not _puede_borrar,
+                 key="em_aplicar"):
+        _ids_em = [int(x) for x in df_em["id"].tolist()]
+        _ok_em = 0
+        _err_em = 0
+        with st.spinner(f"Eliminando {len(_ids_em)} expediente(s), por favor espera..."):
+            for _eid in _ids_em:
+                try:
+                    eliminar_expediente(_eid)
+                    _ok_em += 1
+                except Exception:  # noqa: BLE001
+                    _err_em += 1
+        _detalle_em = ("Filtros: " +
+                       ", ".join(f"{k}={v}" for k, v in _filtros_em.items()) +
+                       f" | Eliminados: {_ok_em} | Con problema: {_err_em}")
+        try:
+            registrar_evento(st.session_state.get("usuario", ""),
+                             "ELIMINACIÓN MASIVA", _detalle_em)
+        except Exception:  # noqa: BLE001
+            pass
+        st.success(f"✅ Se eliminaron **{_ok_em}** expediente(s).")
+        if _err_em:
+            st.warning(f"⚠️ {_err_em} expediente(s) no se pudieron eliminar.")
+        st.info("Las copias archivadas quedan disponibles para retención. "
+                "Actualice la página para ver los filtros nuevamente.")
