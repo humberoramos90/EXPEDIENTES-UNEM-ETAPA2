@@ -2381,6 +2381,29 @@ def obtener_malla(programa, incluir_introductorio=True):
              "periodo_orden": int(r[5] or 0), "trayecto": int(r[6] or 0)} for r in filas]
 
 
+def _acreditable_info(tipo_programa, tipo_estudiante):
+    """Datos de la fila ACTIVIDADES ACADÉMICAS ACREDITABLES que va ANCLADA al
+    último período de la malla (trimestre 12 / semestre 8).
+
+    Devuelve una tupla (nombre, u.c.) o None si no aplica. Solo aplica a los
+    programas PNF (no a los PNFA) y cuando el tipo de ingreso está definido:
+      - BACHILLER: 'ACTIVIDADES ACADÉMICAS ACREDITABLES I y II' -> 12 U.C.
+      - TSU:       'ACTIVIDADES ACADÉMICAS ACREDITABLES II'      ->  6 U.C.
+    Esta misma regla se usa en la certificación PDF y en 'Ver Calificaciones'
+    para que la materia salga igual (nombre, créditos y período) en los dos.
+    """
+    tp = str(tipo_programa or "").upper()
+    te = str(tipo_estudiante or "").upper()
+    if tp != "PNF":
+        return None
+    es_tsu = "TSU" in te
+    if not es_tsu and "BACHILLER" not in te:
+        return None
+    if es_tsu:
+        return ("ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES II", 6.0)
+    return ("ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES I y II", 12.0)
+
+
 def guardar_materia_malla(programa, periodo, materia, creditos, es_introductorio, orden=None):
     """Agrega o actualiza una materia de la malla de un programa."""
     conn = get_db()
@@ -5390,11 +5413,12 @@ def generar_certificado_pdf(row):
     # Solo para programas PNF y cuando hay tipo de ingreso definido:
     #   - BACHILLER: "I y II", 12 U.C.
     #   - TSU:       "II",      6 U.C.
-    # Calificación APROBADO y en el período de egreso del estudiante.
-    if tipo_programa == "PNF" and tipo_estudiante in ("BACHILLER", "TSU"):
-        acr_uc = 6.0 if es_tsu else 12.0
-        acr_nombre = ("ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES II" if es_tsu
-                      else "ACTIVIDADES ACAD\u00c9MICAS ACREDITABLES I y II")
+    # Calificación APROBADO. Va ANCLADA al MISMO período del último
+    # trimestre/semestre de la malla (trimestre 12 / semestre 8). El período de
+    # egreso se conserva SOLO para el serial, el QR y el código de barras.
+    _acr = _acreditable_info(tipo_programa, tipo_estudiante)
+    if _acr:
+        acr_nombre, acr_uc = _acr
         acr_lines = _wrap(acr_nombre, "Helvetica", 8, ancho_mat) or [""]
         acr_alto = max(fila_alto, len(acr_lines) * 3.6 * mm + 2 * mm)
         if y - acr_alto < margen + 18 * mm:
@@ -5403,7 +5427,9 @@ def generar_certificado_pdf(row):
             y = _cab_tabla(y)
         yb = y - 4 * mm
         c.setFont("Helvetica", 7.5)
-        c.drawString(x0 + 2 * mm, yb, egreso or "")
+        # Período del ÚLTIMO trimestre/semestre de la malla (no el egreso).
+        _acr_per = (po_code.get(pos_sorted[-1], "") if pos_sorted else "") or egreso or ""
+        c.drawString(x0 + 2 * mm, yb, _acr_per)
         c.setFont("Helvetica", 8)
         for i, ml in enumerate(acr_lines):
             c.drawString(col_per + 2 * mm, yb - i * 3.6 * mm, ml)
@@ -7506,6 +7532,26 @@ elif menu == "📊 Ver Calificaciones":
                         "U.C.": m["creditos"],
                         "Calificación": cal if cal else "—",
                     })
+                # Fila ACTIVIDADES ACADÉMICAS ACREDITABLES (igual que en el PDF):
+                # anclada al ÚLTIMO trimestre/semestre de la malla, con sus
+                # créditos (12 Bachiller / 6 TSU) y calificación APROBADO. Así
+                # también se ve aquí y SUMA sus créditos al total.
+                _acr_v = _acreditable_info(row_ev.get("tipo_programa", ""), _tipo_est_ev)
+                _mats_v = {str(f["Unidad Curricular"]).upper() for f in filas_v}
+                if _acr_v and _posv_sorted and _acr_v[0].upper() not in _mats_v:
+                    _acr_nombre_v, _acr_uc_v = _acr_v
+                    _ult_po_v = _posv_sorted[-1]
+                    _ult_m_v = next((m for m in malla_ev
+                                     if int(m.get("periodo_orden") or 0) == _ult_po_v), None)
+                    filas_v.append({
+                        "Semestre": _ult_m_v["periodo"] if _ult_m_v else "",
+                        "Período": _pocv.get(_ult_po_v, ""),
+                        "Unidad Curricular": _acr_nombre_v,
+                        "U.C.": _acr_uc_v,
+                        "Calificación": "APROBADO",
+                    })
+                    total_ucv += float(_acr_uc_v)
+                    total_reg += 1
                 st.dataframe(pd.DataFrame(filas_v), use_container_width=True, hide_index=True)
                 cvv1, cvv2 = st.columns(2)
                 with cvv1:
