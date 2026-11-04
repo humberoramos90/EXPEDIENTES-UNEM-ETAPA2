@@ -5242,44 +5242,101 @@ def generar_certificado_pdf(row):
         """Dibuja 'texto' JUSTIFICADO (bordes parejos a ambos lados) desde x0.
         Devuelve la nueva 'y'. La ultima linea de cada parrafo NO se justifica.
         Soporta segmentos en NEGRITA marcados entre **dobles asteriscos**.
-        El formato (margen, justificado, tamano, interlineado) NO cambia:
-        solo se alterna la fuente Helvetica/Helvetica-Bold palabra por palabra."""
+        TOKENIZADOR CORREGIDO: la PUNTUACION (coma, punto, dos puntos, etc.)
+        queda SIEMPRE PEGADA a su palabra. Al cerrar una negrita con '**,', la
+        coma se une a la palabra anterior en lugar de quedar suelta; asi la
+        justificacion no deja un hueco antes del signo y el texto queda
+        parejo (AMAZONAS, / TITULO, / estado, / municipio, ...)."""
         _fu_b = (fuente + "-Bold") if ("Bold" not in fuente) else fuente
+
+        # Signos que NUNCA deben quedar separados de su palabra (la coma
+        # separada es justamente el defecto que rompia la justificacion).
+        _PUNT = ",.;:!?\u2026)]}\u00bb\""
         _toks = []
         _bold = False
         for _chunk in texto.split("**"):
-            for _w in _chunk.split():
-                _toks.append((_w, _bold))
+            for _raw in _chunk.split():
+                # 1) Un token formado SOLO por signos (p. ej. la "," que queda
+                #    suelta al cerrar una negrita '**,') se PEGA a la ultima
+                #    palabra real, ignorando los marcadores vacios.
+                if _raw and all((ch in _PUNT) for ch in _raw):
+                    _k = len(_toks) - 1
+                    while _k >= 0 and _toks[_k][0] == "":
+                        _k -= 1
+                    if _k >= 0:
+                        _toks[_k] = (_toks[_k][0] + _raw, _toks[_k][1])
+                        continue
+                # 2) Un token que EMPIEZA por signo (p. ej. ",municipio" o el
+                #    resto de un ',') tambien se pega a la palabra anterior.
+                while _raw and _raw[0] in _PUNT and _toks:
+                    _k = len(_toks) - 1
+                    while _k >= 0 and _toks[_k][0] == "":
+                        _k -= 1
+                    if _k < 0:
+                        break
+                    _toks[_k] = (_toks[_k][0] + _raw[0], _toks[_k][1])
+                    _raw = _raw[1:]
+                if _raw == "":
+                    continue
+                # El token va TAL CUAL (con su puntuacion pegada).
+                _toks.append((_raw, _bold))
             _bold = not _bold
+        # limpieza final: ningun token vacio debe quedar en la lista
+        _toks = [(_w, _b) for _w, _b in _toks if _w != ""]
         if not _toks:
             return y
+
         def _wpal(_w, _b):
             return stringWidth(_w, _fu_b if _b else fuente, tam)
-        _sp = stringWidth(" ", fuente, tam)
+
+        def _espacio(_n):
+            if _n > 1 and _n % 2 == 0:
+                return stringWidth(" ", fuente, tam), stringWidth(" ", _fu_b, tam)
+            return stringWidth(" ", fuente, tam), stringWidth(" ", fuente, tam)
+
         lineas = []
         cur = []
         cur_w = 0.0
-        for _w, _b in _toks:
+        for _t in _toks:
+            _w, _b = _t
             ww = _wpal(_w, _b)
-            if cur and (cur_w + _sp + ww) > ancho_max:
+            sep = _espacio((len(cur) + 1) if cur else 1)
+            ancho_sep = sep[0] if (_b == cur[-1][1] if cur else _b) else sep[1]
+            if cur and (cur_w + ancho_sep + ww) > ancho_max:
                 lineas.append(cur); cur = []; cur_w = 0.0
             if cur:
-                cur_w += _sp
-            cur.append((_w, _b)); cur_w += ww
+                sep = _espacio(len(cur) + 1)
+                ancho_sep = sep[0] if (_b == cur[-1][1]) else sep[1]
+                cur_w += ancho_sep
+            cur.append(_t); cur_w += ww
         if cur:
             lineas.append(cur)
+
         for idx, ln in enumerate(lineas):
             es_ultima = (idx == len(lineas) - 1)
-            wln = sum(_wpal(_w, _b) for _w, _b in ln) + _sp * (len(ln) - 1)
-            if es_ultima or len(ln) == 1:
-                extra = 0.0
+            wln = sum(_wpal(_w, _b) for _w, _b in ln)
+            # Se recorren los espacios INTERNOS (posiciones 2..len(ln)) para
+            # descontarlos del espacio libre y repartirlo de forma pareja.
+            for k in range(2, len(ln) + 1):
+                wln += _espacio(k)[0] if (ln[k - 1][1] == ln[k - 2][1]) else _espacio(k)[1]
+            if es_ultima or len(ln) <= 1:
+                extra_par = 0.0
+                extra_impar = 0.0
             else:
-                extra = (ancho_max - wln) / (len(ln) - 1)
+                extra_par = (ancho_max - wln) / (len(ln) - 1)
+                extra_impar = extra_par
             cx = x0
-            for _w, _b in ln:
+            for k, (_w, _b) in enumerate(ln):
                 c.setFont(_fu_b if _b else fuente, tam)
                 c.drawString(cx, y, _w)
-                cx += _wpal(_w, _b) + _sp + extra
+                cx += _wpal(_w, _b)
+                if k < len(ln) - 1:
+                    sep = _espacio(k + 2)
+                    ex = (extra_par if _b == ln[k + 1][1] else extra_impar)
+                    if _b == ln[k + 1][1]:
+                        cx += sep[0] + ex
+                    else:
+                        cx += sep[1] + ex
             y -= alto_linea
         return y
 
@@ -5377,7 +5434,7 @@ def generar_certificado_pdf(row):
                  "**, C\u00e9dula de Identidad N\u00ba. **" + cedula + "**, quien curs\u00f3 estudios en el "
                  "Programa Nacional de Formaci\u00f3n Avanzada en Educaci\u00f3n para optar al grado de: **"
                  + titulo_grado + "**, en el estado **" + estado + "**, municipio **" + municipio +
-                 "**, se encuentra su registro acad\u00e9mico en donde curs\u00f3 y aprob\u00f3 las "
+                 ", se encuentra su registro acad\u00e9mico en donde curs\u00f3 y aprob\u00f3 las "
                  "Unidades Curriculares que se especifican a continuaci\u00f3n:")
     else:
         # PNF (pregrado, TSU/Bachiller): mismas frases, con negritas en
@@ -5390,7 +5447,7 @@ def generar_certificado_pdf(row):
                  "**, C\u00e9dula de Identidad No. **" + cedula + "**, quien curs\u00f3 estudios en el "
                  "Programa Nacional de Formaci\u00f3n en Educaci\u00f3n para optar al T\u00edtulo de **" +
                  titulo_grado + "**, en el Estado **" + estado + "**, municipio **" + municipio +
-                 "**, se encuentra su registro acad\u00e9mico en donde consta que curs\u00f3 y aprob\u00f3 "
+                 ", se encuentra su registro acad\u00e9mico en donde consta que curs\u00f3 y aprob\u00f3 "
                  "las Unidades Curriculares que se especifican a continuaci\u00f3n:")
     c.setFont("Helvetica", 9)
     y = _justif(intro, "Helvetica", 9, x1 - x0, y, 4.6 * mm)
