@@ -5682,14 +5682,26 @@ def generar_certificado_pdf(row):
     y -= 3.6 * mm
     c.drawString(x0, y, estado)
 
-    qr_texto = ("UNEM - CERTIFICACION DE CALIFICACIONES\n" +
-                "Nombres: " + nombre_completo + "\n" +
-                "Titulo: " + titulo_grado + "\n" +
-                "Cedula: " + cedula + "\n" +
-                "Estado: " + estado + "\n" +
-                "Egreso: " + (egreso or "-") + "\n" +
-                "Serial: " + serial + "\n" +
-                "Emision: " + fecha_emision)
+    # CONTENIDO DEL QR: parrafo oficial redactado (no etiquetas).
+    # Cedula SIN puntos (igual que en las notas). La frase final "Egresado en
+    # el acto de ..." se agrega SOLO cuando el periodo de grado empieza por 2027.
+    # Para grados anteriores se conserva el formato de texto anterior.
+    if str(egreso or "").strip().upper().startswith("2027"):
+        qr_texto = ("Lenin Romero, titular de la C.I. Nº. 2.956.814, "
+                    "Secretario de la UNEM, certifica que las calificaciones del "
+                    "portador de la C.I. Nº " + cedula + ", "
+                    "Son autenticas y se encuentran bajo custodia en el archivo de "
+                    "la Dirección de Control de estudios (DRCE). "
+                    "Egresado en el acto de enero " + str(egreso).strip().upper() + ".")
+    else:
+        qr_texto = ("UNEM - CERTIFICACION DE CALIFICACIONES\n" +
+                    "Nombres: " + nombre_completo + "\n" +
+                    "Titulo: " + titulo_grado + "\n" +
+                    "Cedula: " + cedula + "\n" +
+                    "Estado: " + estado + "\n" +
+                    "Egreso: " + (egreso or "-") + "\n" +
+                    "Serial: " + serial + "\n" +
+                    "Emision: " + fecha_emision)
     y_pie = margen + 2 * mm
     qsize = 22 * mm
     # Codigo QR en la esquina inferior DERECHA
