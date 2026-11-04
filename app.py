@@ -5240,21 +5240,46 @@ def generar_certificado_pdf(row):
 
     def _justif(texto, fuente, tam, ancho_max, y, alto_linea, ultima_justif=False):
         """Dibuja 'texto' JUSTIFICADO (bordes parejos a ambos lados) desde x0.
-        Devuelve la nueva 'y'. La ultima linea de cada parrafo NO se justifica."""
-        lineas = _wrap(texto, fuente, tam, ancho_max)
-        c.setFont(fuente, tam)
+        Devuelve la nueva 'y'. La ultima linea de cada parrafo NO se justifica.
+        Soporta segmentos en NEGRITA marcados entre **dobles asteriscos**.
+        El formato (margen, justificado, tamano, interlineado) NO cambia:
+        solo se alterna la fuente Helvetica/Helvetica-Bold palabra por palabra."""
+        _fu_b = (fuente + "-Bold") if ("Bold" not in fuente) else fuente
+        _toks = []
+        _bold = False
+        for _chunk in texto.split("**"):
+            for _w in _chunk.split():
+                _toks.append((_w, _bold))
+            _bold = not _bold
+        if not _toks:
+            return y
+        def _wpal(_w, _b):
+            return stringWidth(_w, _fu_b if _b else fuente, tam)
+        _sp = stringWidth(" ", fuente, tam)
+        lineas = []
+        cur = []
+        cur_w = 0.0
+        for _w, _b in _toks:
+            ww = _wpal(_w, _b)
+            if cur and (cur_w + _sp + ww) > ancho_max:
+                lineas.append(cur); cur = []; cur_w = 0.0
+            if cur:
+                cur_w += _sp
+            cur.append((_w, _b)); cur_w += ww
+        if cur:
+            lineas.append(cur)
         for idx, ln in enumerate(lineas):
             es_ultima = (idx == len(lineas) - 1)
-            palabras = ln.split()
-            if es_ultima or len(palabras) == 1:
-                c.drawString(x0, y, ln)
+            wln = sum(_wpal(_w, _b) for _w, _b in ln) + _sp * (len(ln) - 1)
+            if es_ultima or len(ln) == 1:
+                extra = 0.0
             else:
-                ancho_txt = stringWidth(ln, fuente, tam)
-                extra = (ancho_max - ancho_txt) / (len(palabras) - 1)
-                cx = x0
-                for w in palabras:
-                    c.drawString(cx, y, w)
-                    cx += stringWidth(w, fuente, tam) + stringWidth(" ", fuente, tam) + extra
+                extra = (ancho_max - wln) / (len(ln) - 1)
+            cx = x0
+            for _w, _b in ln:
+                c.setFont(_fu_b if _b else fuente, tam)
+                c.drawString(cx, y, _w)
+                cx += _wpal(_w, _b) + _sp + extra
             y -= alto_linea
         return y
 
@@ -5341,15 +5366,32 @@ def generar_certificado_pdf(row):
 
     y = _encabezado(alto - margen)
 
-    intro = ("Quien suscribe LENIN ROBERTO ROMERO ROSA, titular de la C\u00e9dula de identidad "
-             "No. V-2.956.814, secretario de la Universidad Nacional Experimental del "
-             "Magisterio \u201cSamuel Robinson\u201d, con asiento principal en la ciudad de Caracas, "
-             "Distrito Capital, Venezuela, certifica que en el Expediente Acad\u00e9mico "
-             "Estudiantil UNEM correspondiente a " + nombre_completo + ", C\u00e9dula de Identidad "
-             "No. " + cedula + ", quien curs\u00f3 estudios en el Programa Nacional de Formaci\u00f3n en "
-             "Educaci\u00f3n para optar al T\u00edtulo de " + titulo_grado + ", en el Estado " + estado + ", "
-             "municipio " + municipio + ", se encuentra su registro acad\u00e9mico en donde consta "
-             "que curs\u00f3 y aprob\u00f3 las Unidades Curriculares que se especifican a continuaci\u00f3n:")
+    if es_pnfa:
+        # PNFA (Avanzado): parrafo propio, con comas y negritas especificas.
+        # Los marcadores **...** se dibujan en NEGRITA; el resto igual.
+        intro = ("Quien suscribe, LENIN ROBERTO ROMERO ROSA, titular de la C\u00e9dula de "
+                 "identidad N\u00ba. V-2.956.814, Secretario de la Universidad Nacional "
+                 "Experimental del Magisterio \u201cSamuel Robinson\u201d, con asiento principal en "
+                 "la ciudad de Caracas, Distrito Capital, Venezuela, certifica que en el "
+                 "Expediente Acad\u00e9mico Estudiantil UNEM correspondiente a: **" + nombre_completo +
+                 "**, C\u00e9dula de Identidad N\u00ba. **" + cedula + "**, quien curs\u00f3 estudios en el "
+                 "Programa Nacional de Formaci\u00f3n Avanzada en Educaci\u00f3n para optar al grado de: **"
+                 + titulo_grado + "**, en el estado **" + estado + "**, municipio **" + municipio +
+                 "**, se encuentra su registro acad\u00e9mico en donde curs\u00f3 y aprob\u00f3 las "
+                 "Unidades Curriculares que se especifican a continuaci\u00f3n:")
+    else:
+        # PNF (pregrado, TSU/Bachiller): mismas frases, con negritas en
+        # nombre, cedula, estado, municipio y titulo que opta.
+        intro = ("Quien suscribe, LENIN ROBERTO ROMERO ROSA, titular de la C\u00e9dula de "
+                 "identidad No. V-2.956.814, Secretario de la Universidad Nacional "
+                 "Experimental del Magisterio \u201cSamuel Robinson\u201d, con asiento principal en "
+                 "la ciudad de Caracas, Distrito Capital, Venezuela, certifica que en el "
+                 "Expediente Acad\u00e9mico Estudiantil UNEM correspondiente a **" + nombre_completo +
+                 "**, C\u00e9dula de Identidad No. **" + cedula + "**, quien curs\u00f3 estudios en el "
+                 "Programa Nacional de Formaci\u00f3n en Educaci\u00f3n para optar al T\u00edtulo de **" +
+                 titulo_grado + "**, en el Estado **" + estado + "**, municipio **" + municipio +
+                 "**, se encuentra su registro acad\u00e9mico en donde consta que curs\u00f3 y aprob\u00f3 "
+                 "las Unidades Curriculares que se especifican a continuaci\u00f3n:")
     c.setFont("Helvetica", 9)
     y = _justif(intro, "Helvetica", 9, x1 - x0, y, 4.6 * mm)
     y -= 3 * mm
@@ -5552,7 +5594,7 @@ def generar_certificado_pdf(row):
                    "es del 1 al 20 con m\u00ednima aprobatoria " + _min_aprob + ". Son consideradas tambi\u00e9n "
                    "las calificaciones de AP \u201cAprobado\u201d, AC \u201cAprobada por Acreditaci\u00f3n\u201d.")
     parr_tsu = ("Estas Notas Certificadas pertenecen a un Profesional al cual se le "
-                "reconoci\u00f3 dos trayectos (T1 y T2) y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
+                "reconoci\u00f3 dos trayectos (T1 y T2), y curs\u00f3 y aprob\u00f3 o acredit\u00f3 dos "
                 "trayectos (T3 y T4) de la malla del Plan de Estudios para obtener el "
                 "T\u00edtulo de: " + titulo_grado + " y as\u00ed dar cumplimiento a la resoluci\u00f3n del "
                 "Consejo Directivo No: 083.12.2022.")
@@ -5572,9 +5614,11 @@ def generar_certificado_pdf(row):
     firma_line_y = margen + 85 * mm
 
     # Altura del bloque de leyenda (sin la firma, que va anclada aparte).
-    nota_h = len(_wrap(nota_escala, "Helvetica", 9.5, x1 - x0)) * 4.8 * mm + 2 * mm
-    tsu_h = (len(_wrap(parr_tsu, "Helvetica", 8, x1 - x0)) * 4 * mm + 2 * mm) if es_tsu else 0
-    cierre_h = len(_wrap(cierre, "Helvetica", 10, x1 - x0)) * 5.0 * mm
+    _LEY_TAM = 9.0   # tamano UNICO para los 3 parrafos de la leyenda
+    _LEY_ALTO = 4.6 * mm
+    nota_h = len(_wrap(nota_escala, "Helvetica", _LEY_TAM, x1 - x0)) * _LEY_ALTO + 2 * mm
+    tsu_h = (len(_wrap(parr_tsu, "Helvetica", _LEY_TAM, x1 - x0)) * _LEY_ALTO + 2 * mm) if es_tsu else 0
+    cierre_h = len(_wrap(cierre, "Helvetica", _LEY_TAM, x1 - x0)) * _LEY_ALTO
     leyenda_h = nota_h + tsu_h + cierre_h
 
     # Si la leyenda + la firma anclada no caben en lo que resta de la hoja, se
@@ -5585,12 +5629,12 @@ def generar_certificado_pdf(row):
     # Leyenda JUSTIFICADA, anclada ARRIBA (justo debajo del título/tabla).
     # Pequeño aire bajo el título para calcar el margen superior del modelo.
     y -= 7 * mm
-    y = _justif(nota_escala, "Helvetica", 9.5, x1 - x0, y, 4.8 * mm)
+    y = _justif(nota_escala, "Helvetica", _LEY_TAM, x1 - x0, y, _LEY_ALTO)
     y -= 2 * mm
     if es_tsu:
-        y = _justif(parr_tsu, "Helvetica", 8, x1 - x0, y, 4 * mm)
+        y = _justif(parr_tsu, "Helvetica", _LEY_TAM, x1 - x0, y, _LEY_ALTO)
         y -= 2 * mm
-    y = _justif(cierre, "Helvetica", 10, x1 - x0, y, 5.0 * mm)
+    y = _justif(cierre, "Helvetica", _LEY_TAM, x1 - x0, y, _LEY_ALTO)
 
     # Firma ANCLADA en 'firma_line_y'. Solo si la leyenda terminó tan abajo que
     # pisaría la firma, ésta baja lo justo para respetar el aire con el cierre.
