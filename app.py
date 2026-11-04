@@ -5433,7 +5433,7 @@ def generar_certificado_pdf(row):
                  "Expediente Acad\u00e9mico Estudiantil UNEM correspondiente a: **" + nombre_completo +
                  "**, C\u00e9dula de Identidad N\u00ba. **" + cedula + "**, quien curs\u00f3 estudios en el "
                  "Programa Nacional de Formaci\u00f3n Avanzada en Educaci\u00f3n para optar al grado de: **"
-                 + titulo_grado + "**, en el estado **" + estado + "**, municipio **" + municipio +
+                 + titulo_grado + "**, en el estado " + "**" + estado + "**" + ", municipio " + "**" + municipio + "**" +
                  ", se encuentra su registro acad\u00e9mico en donde curs\u00f3 y aprob\u00f3 las "
                  "Unidades Curriculares que se especifican a continuaci\u00f3n:")
     else:
@@ -5446,7 +5446,7 @@ def generar_certificado_pdf(row):
                  "Expediente Acad\u00e9mico Estudiantil UNEM correspondiente a **" + nombre_completo +
                  "**, C\u00e9dula de Identidad No. **" + cedula + "**, quien curs\u00f3 estudios en el "
                  "Programa Nacional de Formaci\u00f3n en Educaci\u00f3n para optar al T\u00edtulo de **" +
-                 titulo_grado + "**, en el Estado **" + estado + "**, municipio **" + municipio +
+                 titulo_grado + "**, en el Estado " + "**" + estado + "**" + ", municipio " + "**" + municipio + "**" +
                  ", se encuentra su registro acad\u00e9mico en donde consta que curs\u00f3 y aprob\u00f3 "
                  "las Unidades Curriculares que se especifican a continuaci\u00f3n:")
     c.setFont("Helvetica", 9)
