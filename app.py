@@ -5358,6 +5358,96 @@ def generar_certificado_pdf(row):
     total_uc = 0.0
     fila_alto = 4.6 * mm
     ancho_mat = (col_ucv - 2 * mm) - (col_per + 2 * mm)
+    # ===== PRE-PASS: reparto UNIFORME de filas (equitativo en todas las hojas) =====
+    # Reglas acordadas con la Secretaría:
+    #  - La firma SIEMPRE va en una hoja propia, SIN filas de materias.
+    #  - Las filas se estiran por IGUAL en TODAS las hojas (misma altura) para
+    #    repartir el relleno desde la primera hoja y que ninguna hoja de notas
+    #    deje un blanco mayor a 4 cm antes del margen inferior, sin que el
+    #    cambio de tamaño se note entre hojas.
+    _Y1 = y                               # tope de la tabla en la 1ª hoja (tras cabecera)
+    _Y2 = (alto - margen) - 75 * mm        # tope de la tabla en hojas de continuación
+    _bottom_fill = margen + 28 * mm        # las filas llenan hasta aquí (blanco objetivo ~2.8 cm)
+    _hard_bottom = margen + 16 * mm        # límite duro: jamás pasar de aquí
+    _rows_seq = list(malla)
+    _acr_prev = _acreditable_info(tipo_programa, tipo_estudiante)
+    if _acr_prev:
+        _rows_seq.append({"materia": _acr_prev[0]})
+    _n_malla = len(malla)
+    _N = len(_rows_seq)
+    _h_nat = []
+    for _m in _rows_seq:
+        _ml = _wrap(_m.get("materia", ""), "Helvetica", 8, ancho_mat) or [""]
+        _h_nat.append(max(fila_alto, len(_ml) * 3.6 * mm + 2 * mm))
+
+    def _paginas_nat(_hs):
+        _p = 1; _yy = _Y1
+        for _h in _hs:
+            if _yy - _h < _hard_bottom:
+                _p += 1; _yy = _Y2
+            _yy -= _h
+        return _p
+
+    # Capacidad (altura útil hasta el límite duro) de cada hoja.
+    def _caps_de(_Pn):
+        return [((_Y1 - _hard_bottom) if _p == 0 else (_Y2 - _hard_bottom)) for _p in range(_Pn)]
+
+    # Reparto EQUITATIVO: cuántas filas toca a cada hoja, en proporción a su
+    # capacidad real (la hoja 1 cabe menos por el texto de introducción).
+    def _conteos(_Pn):
+        _caps = _caps_de(_Pn)
+        _sc = sum(_caps) or 1.0
+        _raw = [_c / _sc * _N for _c in _caps]
+        _n = [int(_r) for _r in _raw]
+        _rem = _N - sum(_n)
+        _ordfr = sorted(range(_Pn), key=lambda _q: _raw[_q] - int(_raw[_q]), reverse=True)
+        for _p in _ordfr[:_rem]:
+            _n[_p] += 1
+        return _n
+
+    _pages = []
+    _h_fin = []
+    if _N:
+        # 1) Número mínimo de hojas que admite TODAS las filas a su alto natural.
+        _P = _paginas_nat(_h_nat)
+        # 2) Reparto equitativo por capacidad. Si a su alto natural una hoja se
+        #    pasara de su límite, se agrega una hoja y se vuelve a repartir.
+        _groups = []
+        while True:
+            _n = _conteos(_P)
+            _groups = []; _idx = 0
+            for _cnt in _n:
+                _groups.append(list(range(_idx, _idx + _cnt))); _idx += _cnt
+            _caps = _caps_de(_P)
+            _ok = all(sum(_h_nat[_i] for _i in _groups[_p]) <= _caps[_p] for _p in range(_P))
+            if _ok or _P >= _N:
+                break
+            _P += 1
+        # 3) Estiramiento UNIFORME para rellenar (blanco objetivo ~2.8 cm),
+        #    LIMITADO para que ninguna hoja rebase su límite duro. Así la última
+        #    materia NUNCA se corre a la hoja siguiente ni a la de la firma.
+        _capfill = (_Y1 - _bottom_fill) + (_P - 1) * (_Y2 - _bottom_fill)
+        _h_obj = max(fila_alto, _capfill / _N)
+        _caps = _caps_de(_P)
+
+        def _suma_pg(_g, _hh):
+            return sum(max(_hh, _h_nat[_i]) for _i in _g)
+
+        _lo, _hi = fila_alto, max(fila_alto, _h_obj)
+        for _ in range(40):
+            _mid = (_lo + _hi) / 2
+            if all(_suma_pg(_groups[_p], _mid) <= _caps[_p] for _p in range(_P)):
+                _lo = _mid
+            else:
+                _hi = _mid
+        _h_unif = _lo
+        _h_fin = [max(_h_unif, _h_nat[_i]) for _i in range(_N)]
+        _pages = [_g for _g in _groups if _g]
+    _break_before = set()
+    for _p in range(1, len(_pages)):
+        if _pages[_p]:
+            _break_before.add(_pages[_p][0])
+    # ===== FIN PRE-PASS =====
     if not malla:
         c.setFont("Helvetica-Oblique", 9)
         c.drawString(col_per + 2 * mm, y - 4 * mm, "(A\u00fan no hay malla curricular cargada para este programa.)")
@@ -5365,19 +5455,17 @@ def generar_certificado_pdf(row):
         c.line(x0, y - fila_alto, x1, y - fila_alto)
         _vlines(y, y - fila_alto)
         y -= fila_alto
-    for m in malla:
+    for _ridx, m in enumerate(malla):
         nota_raw = notas.get(m["materia"], "")
         if nota_raw:
             calif_num, calif_let = _calif_num_letras(nota_raw)
         else:
             calif_num, calif_let = "", "POR CURSAR"
         mat_lines = _wrap(m["materia"], "Helvetica", 8, ancho_mat) or [""]
-        alto_fila = max(fila_alto, len(mat_lines) * 3.6 * mm + 2 * mm)
-        # Reserva mínima: solo hay que garantizar que la fila y la fila TOTAL
-        # entren en la página. El bloque de cierre+firma se maneja aparte como
-        # una unidad (nunca se dibuja la firma sola). Reservar poco = más filas
-        # por página = menos páginas (máximo deseado: 4).
-        if y - alto_fila < margen + 18 * mm:
+        # Alto de fila UNIFORME calculado en el pre-pass (mismo alto en todas
+        # las hojas) para repartir el relleno por igual y evitar blancos > 4 cm.
+        alto_fila = _h_fin[_ridx] if _ridx < len(_h_fin) else max(fila_alto, len(mat_lines) * 3.6 * mm + 2 * mm)
+        if _ridx in _break_before:
             c.showPage()
             y = _encabezado(alto - margen)
             y = _cab_tabla(y)
@@ -5385,7 +5473,8 @@ def generar_certificado_pdf(row):
         cod = periodos_notas.get(m["materia"], "") or po_code.get(po, "")
         uc = float(m["creditos"] or 0)
         total_uc += uc
-        yb = y - 4 * mm
+        _blk = len(mat_lines) * 3.6 * mm
+        yb = y - (alto_fila - _blk) / 2 - 3 * mm   # texto centrado en la celda
         c.setFont("Helvetica", 7.5)
         c.drawString(x0 + 2 * mm, yb, cod)
         c.setFont("Helvetica", 8)
@@ -5420,12 +5509,13 @@ def generar_certificado_pdf(row):
     if _acr:
         acr_nombre, acr_uc = _acr
         acr_lines = _wrap(acr_nombre, "Helvetica", 8, ancho_mat) or [""]
-        acr_alto = max(fila_alto, len(acr_lines) * 3.6 * mm + 2 * mm)
-        if y - acr_alto < margen + 18 * mm:
+        acr_alto = _h_fin[-1] if _h_fin else max(fila_alto, len(acr_lines) * 3.6 * mm + 2 * mm)
+        if _n_malla in _break_before:
             c.showPage()
             y = _encabezado(alto - margen)
             y = _cab_tabla(y)
-        yb = y - 4 * mm
+        _blk = len(acr_lines) * 3.6 * mm
+        yb = y - (acr_alto - _blk) / 2 - 3 * mm
         c.setFont("Helvetica", 7.5)
         # Período del ÚLTIMO trimestre/semestre de la malla (no el egreso).
         _acr_per = (po_code.get(pos_sorted[-1], "") if pos_sorted else "") or egreso or ""
@@ -5544,9 +5634,9 @@ def generar_certificado_pdf(row):
     c.line(x0, y, x0 + 70 * mm, y)
     y -= 4 * mm
     c.setFont("Helvetica", 8)
-    c.drawString(x0, y, "Representante de la Secretar\u00eda")
+    c.drawString(x0, y, "Responsable de la Secretar\u00eda del Estado")
     y -= 3.6 * mm
-    c.drawString(x0, y, "del Estado " + estado)
+    c.drawString(x0, y, estado)
 
     qr_texto = ("UNEM - CERTIFICACION DE CALIFICACIONES\n" +
                 "Nombres: " + nombre_completo + "\n" +
