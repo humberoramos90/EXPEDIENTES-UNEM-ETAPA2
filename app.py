@@ -5616,8 +5616,36 @@ def generar_certificado_pdf(row):
         _blk = len(acr_lines) * 3.6 * mm
         yb = y - (acr_alto - _blk) / 2 - 3 * mm
         c.setFont("Helvetica", 7.5)
-        # Período del ÚLTIMO trimestre/semestre de la malla (no el egreso).
-        _acr_per = (po_code.get(pos_sorted[-1], "") if pos_sorted else "") or egreso or ""
+        # Período del ÚLTIMO trimestre/semestre REALMENTE cursado (trimestre 12 /
+        # semestre 8), tomado de las NOTAS reales de ese período. NUNCA el
+        # egreso: la fecha de grado va mucho después y solo alimenta el serial,
+        # el QR y el código de barras.
+        def _per_key(_p):
+            _s = (_p or "").upper().strip()
+            _ya, _, _resto = _s.partition("-")
+            try:
+                _yk = int("".join(ch for ch in _ya if ch.isdigit()) or 0)
+            except ValueError:
+                _yk = 0
+            if _resto in _ROMANOS:
+                _rk = _ROMANOS.index(_resto)
+            else:
+                _rk = int("".join(ch for ch in _resto if ch.isdigit()) or 0)
+            return (_yk, _rk)
+        # Materias del ÚLTIMO período de la malla (mayor periodo_orden) y su
+        # período REAL según las notas cargadas del estudiante.
+        _ult_po = pos_sorted[-1] if pos_sorted else 0
+        _pers_ult = [periodos_notas.get(m["materia"], "") for m in malla
+                     if int(m.get("periodo_orden") or 0) == _ult_po]
+        _pers_ult = [p for p in _pers_ult if p]
+        if _pers_ult:
+            _acr_per = max(_pers_ult, key=_per_key)
+        else:
+            _pers_reales = [p for p in periodos_notas.values() if p]
+            if _pers_reales:
+                _acr_per = max(_pers_reales, key=_per_key)
+            else:
+                _acr_per = (po_code.get(pos_sorted[-1], "") if pos_sorted else "") or egreso or ""
         c.drawString(x0 + 2 * mm, yb, _acr_per)
         c.setFont("Helvetica", 8)
         for i, ml in enumerate(acr_lines):
@@ -5970,54 +5998,54 @@ with st.sidebar:
     if rol == "ADMIN_PRINCIPAL":
         menu = st.radio("📍 Módulos", [
             "🏠 Inicio",
-            "📊 Consultar Expedientes",
-            "📝 Registrar Expediente",
             "🔍 Buscar Expediente",
+            "📝 Registrar Expediente",
             "📝 Registro de Calificaciones",
-            "🔓 Carga de Notas (Apertura/Cierre)",
             "📊 Ver Calificaciones",
             "📄 Generar Documentos",
             "📋 Solicitudes de Modificación",
-            "🧮 Mallas Curriculares",
             "📥 Carga Masiva (Excel)",
-            "📈 Estadísticas",
-            "👥 Gestión de Usuarios",
-            "⚙️ Configuración de Programas",
-            "🏫 Aulas Taller",
-            "📧 Configuración de Correo",
-            "📜 Bitácora de Movimientos",
-            "📥 Respaldo de Datos",
             "🗑️ Eliminación Masiva",
+            "📊 Consultar Expedientes",
+            "🔓 Carga de Notas (Apertura/Cierre)",
+            "⚙️ Configuración de Programas",
+            "🧮 Mallas Curriculares",
+            "🏫 Aulas Taller",
+            "📈 Estadísticas",
+            "📧 Configuración de Correo",
+            "👥 Gestión de Usuarios",
+            "📥 Respaldo de Datos",
+            "📜 Bitácora de Movimientos",
         ], key="nav_principal")
     elif rol == "ADMIN_AUXILIAR":
         menu = st.radio("📍 Módulos", [
             "🏠 Inicio",
-            "📊 Consultar Expedientes",
-            "📝 Registrar Expediente",
             "🔍 Buscar Expediente",
+            "📝 Registrar Expediente",
             "📝 Registro de Calificaciones",
-            "🔓 Carga de Notas (Apertura/Cierre)",
             "📊 Ver Calificaciones",
             "📄 Generar Documentos",
             "📋 Solicitudes de Modificación",
-            "🧮 Mallas Curriculares",
             "📥 Carga Masiva (Excel)",
-            "📈 Estadísticas",
-            "👥 Gestión de Usuarios",
+            "📊 Consultar Expedientes",
+            "🔓 Carga de Notas (Apertura/Cierre)",
+            "🧮 Mallas Curriculares",
             "🏫 Aulas Taller",
+            "📈 Estadísticas",
             "📧 Configuración de Correo",
-            "📜 Bitácora de Movimientos",
+            "👥 Gestión de Usuarios",
             "📥 Respaldo de Datos",
+            "📜 Bitácora de Movimientos",
         ], key="nav_auxiliar")
     else:  # ADMIN_REGIONAL
         menu = st.radio("📍 Módulos", [
             "🏠 Inicio",
-            "📊 Consultar Expedientes",
-            "📝 Registrar Expediente",
             "🔍 Buscar Expediente",
+            "📝 Registrar Expediente",
             "📝 Registro de Calificaciones",
             "📊 Ver Calificaciones",
             "📋 Mis Solicitudes",
+            "📊 Consultar Expedientes",
             "📈 Estadísticas",
         ], key="nav_regional")
 
@@ -7746,9 +7774,28 @@ elif menu == "📊 Ver Calificaciones":
                     _ult_po_v = _posv_sorted[-1]
                     _ult_m_v = next((m for m in malla_ev
                                      if int(m.get("periodo_orden") or 0) == _ult_po_v), None)
+                    # Período REAL del último período de la malla (trimestre 12 /
+                    # semestre 8), tomado de las notas. NUNCA el egreso.
+                    def _per_key_v(_p):
+                        _s = (_p or "").upper().strip()
+                        _ya, _, _resto = _s.partition("-")
+                        try:
+                            _yk = int("".join(ch for ch in _ya if ch.isdigit()) or 0)
+                        except ValueError:
+                            _yk = 0
+                        if _resto in _ROMANOS:
+                            _rk = _ROMANOS.index(_resto)
+                        else:
+                            _rk = int("".join(ch for ch in _resto if ch.isdigit()) or 0)
+                        return (_yk, _rk)
+                    _pers_ult_v = [periodos_ev.get(m["materia"], "") for m in malla_ev
+                                   if int(m.get("periodo_orden") or 0) == _ult_po_v]
+                    _pers_ult_v = [p for p in _pers_ult_v if p]
+                    _acr_per_v = (max(_pers_ult_v, key=_per_key_v) if _pers_ult_v
+                                  else _pocv.get(_ult_po_v, ""))
                     filas_v.append({
                         "Semestre": _ult_m_v["periodo"] if _ult_m_v else "",
-                        "Período": _pocv.get(_ult_po_v, ""),
+                        "Período": _acr_per_v,
                         "Unidad Curricular": _acr_nombre_v,
                         "U.C.": _acr_uc_v,
                         "Calificación": "APROBADO",
